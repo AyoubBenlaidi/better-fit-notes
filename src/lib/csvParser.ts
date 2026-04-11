@@ -131,7 +131,9 @@ function parseTimeToSeconds(time: string): number {
 }
 
 function toMeters(distance: number, unit: string): number {
-  if (unit === 'miles') return Math.round(distance * 1609.34);
+  const u = unit.toLowerCase();
+  if (u === 'miles') return Math.round(distance * 1609.34);
+  if (u === 'm')     return Math.round(distance); // already meters (e.g. Rowing Machine)
   return Math.round(distance * 1000); // km → meters
 }
 

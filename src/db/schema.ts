@@ -105,6 +105,41 @@ export class BetterFitDB extends Dexie {
       });
     });
 
+    // v3: fix exercises whose muscleGroupId was left as a legacy mg-xxx key
+    // (happens when the v2 migration ran but exercises already had UUID ids,
+    //  causing the mg-xxx → UUID update branch to be skipped)
+    this.version(3).stores(stores).upgrade(async (tx) => {
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const isUUID = (s: string) => UUID_RE.test(s);
+
+      const muscleGroups = await tx.table('muscleGroups').toArray();
+      const mgByLegacy = new Map<string, string>(); // 'mg-xxx' → UUID
+      const mgByName  = new Map<string, string>(); // 'Poitrine' → UUID
+
+      for (const mg of muscleGroups) {
+        if (isUUID(mg.id)) mgByName.set(mg.name, mg.id);
+        else mgByLegacy.set(mg.id, mg.id); // shouldn't happen after v2, safety net
+      }
+
+      // Build legacy key → UUID via MUSCLE_GROUP_NAMES
+      const legacyToUUID = new Map<string, string>();
+      for (const [legacyKey, frenchName] of Object.entries(MUSCLE_GROUP_NAMES)) {
+        const uuid = mgByName.get(frenchName);
+        if (uuid) legacyToUUID.set(legacyKey, uuid);
+      }
+
+      const exercises = await tx.table('exercises').toArray();
+      for (const ex of exercises) {
+        if (!isUUID(ex.muscleGroupId)) {
+          const uuid = legacyToUUID.get(ex.muscleGroupId) ?? mgByLegacy.get(ex.muscleGroupId);
+          if (uuid) await tx.table('exercises').update(ex.id, { muscleGroupId: uuid });
+          else console.warn(`[DB] ⚠️ Could not resolve muscleGroupId for exercise "${ex.name}" (${ex.muscleGroupId})`);
+        }
+      }
+
+      console.log('[DB] ✅ Migration v3 complete — muscleGroupId references fixed');
+    });
+
     this.on('populate', () => seedDatabase(this));
   }
 }

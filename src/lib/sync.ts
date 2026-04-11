@@ -210,8 +210,10 @@ async function pushAllLocalData(userId: string) {
   const muscleGroups = (await db.muscleGroups.toArray()).filter((mg) => isUUID(mg.id));
   await upsert('muscleGroups', muscleGroups as unknown as Record<string, unknown>[]);
 
-  // 2. exercises — FK → muscle_groups
-  const exercises = (await db.exercises.toArray()).filter((ex) => isUUID(ex.id));
+  // 2. exercises — FK → muscle_groups (guard both id and muscleGroupId)
+  const exercises = (await db.exercises.toArray()).filter(
+    (ex) => isUUID(ex.id) && isUUID(ex.muscleGroupId),
+  );
   await upsert('exercises', exercises as unknown as Record<string, unknown>[]);
 
   // 3. sessions & templates — no FK deps (other than user)
