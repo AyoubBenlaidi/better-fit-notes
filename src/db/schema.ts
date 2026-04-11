@@ -296,26 +296,37 @@ export const EXERCISE_LIBRARY: ExerciseDef[] = [
 // ─── Seed (first install only) ────────────────────────────────────────────────
 
 async function seedDatabase(database: BetterFitDB) {
-  const muscleGroups: MuscleGroup[] = [
-    { id: 'mg-chest',      name: 'Poitrine',         color: '#EF4444' },
-    { id: 'mg-back',       name: 'Dos',              color: '#3B82F6' },
-    { id: 'mg-shoulders',  name: 'Épaules',          color: '#F59E0B' },
-    { id: 'mg-biceps',     name: 'Biceps',           color: '#8B5CF6' },
-    { id: 'mg-triceps',    name: 'Triceps',          color: '#EC4899' },
-    { id: 'mg-forearms',   name: 'Avant-bras',       color: '#14B8A6' },
-    { id: 'mg-quads',      name: 'Quadriceps',       color: '#22C55E' },
-    { id: 'mg-hamstrings', name: 'Ischio-jambiers',  color: '#F97316' },
-    { id: 'mg-glutes',     name: 'Fessiers',         color: '#A855F7' },
-    { id: 'mg-calves',     name: 'Mollets',          color: '#06B6D4' },
-    { id: 'mg-abs',        name: 'Abdominaux',       color: '#84CC16' },
-    { id: 'mg-cardio',     name: 'Cardio',           color: '#64748B' },
+  const now = new Date();
+
+  // Generate UUIDs for muscle groups upfront so exercises can reference them directly
+  const mgDefs: Array<{ key: string; name: string; color: string }> = [
+    { key: 'mg-chest',      name: 'Poitrine',        color: '#EF4444' },
+    { key: 'mg-back',       name: 'Dos',             color: '#3B82F6' },
+    { key: 'mg-shoulders',  name: 'Épaules',         color: '#F59E0B' },
+    { key: 'mg-biceps',     name: 'Biceps',          color: '#8B5CF6' },
+    { key: 'mg-triceps',    name: 'Triceps',         color: '#EC4899' },
+    { key: 'mg-forearms',   name: 'Avant-bras',      color: '#14B8A6' },
+    { key: 'mg-quads',      name: 'Quadriceps',      color: '#22C55E' },
+    { key: 'mg-hamstrings', name: 'Ischio-jambiers', color: '#F97316' },
+    { key: 'mg-glutes',     name: 'Fessiers',        color: '#A855F7' },
+    { key: 'mg-calves',     name: 'Mollets',         color: '#06B6D4' },
+    { key: 'mg-abs',        name: 'Abdominaux',      color: '#84CC16' },
+    { key: 'mg-cardio',     name: 'Cardio',          color: '#64748B' },
   ];
 
-  const now = new Date();
+  // key → UUID mapping used by exercises below
+  const mgIdMap = new Map<string, string>(mgDefs.map((mg) => [mg.key, crypto.randomUUID()]));
+
+  const muscleGroups: MuscleGroup[] = mgDefs.map((mg) => ({
+    id: mgIdMap.get(mg.key)!,
+    name: mg.name,
+    color: mg.color,
+  }));
+
   const exercises: Exercise[] = EXERCISE_LIBRARY.map((def) => ({
     id: crypto.randomUUID(),
     name: def.name,
-    muscleGroupId: def.mgKey, // v2 migration will convert mg-xxx → UUID
+    muscleGroupId: mgIdMap.get(def.mgKey)!, // UUID from the start — no migration needed
     type: def.type,
     isCustom: false,
     createdAt: now,
