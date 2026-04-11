@@ -1,0 +1,277 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,400;0,500;1,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Design Tokens: Dark (default) ─────────────────────────────────────────── */
+:root,
+.dark {
+  --color-background:      #0A0A0F;
+  --color-surface-card:    #111118;
+  --color-surface-raised:  #1A1A24;
+  --color-surface-overlay: #22222E;
+  --color-border:          #252530;
+  --color-border-subtle:   #1C1C27;
+  --color-text-primary:    #F0F0F5;
+  --color-text-secondary:  #8A8A9A;
+  --color-text-muted:      #4A4A5A;
+
+  --color-accent:          #4F7FFA;
+  --color-accent-pressed:  #3A65D4;
+  --color-accent-glow:     rgba(79, 127, 250, 0.2);
+
+  --color-primary:         #4F7FFA;
+  --color-primary-pressed: #3A65D4;
+
+  --skeleton-from:  #1A1A24;
+  --skeleton-to:    #252530;
+  --grain-opacity:  0.03;
+
+  /* Chart / recharts colors — static for both themes */
+  --chart-primary: #4F7FFA;
+  --chart-grid:    #252530;
+  --chart-text:    #8A8A9A;
+}
+
+/* ── Design Tokens: Light ───────────────────────────────────────────────────── */
+.light {
+  --color-background:      #F4F4F7;
+  --color-surface-card:    #FFFFFF;
+  --color-surface-raised:  #EDEDF0;
+  --color-surface-overlay: #E5E5E9;
+  --color-border:          #D8D8DF;
+  --color-border-subtle:   #E4E4E9;
+  --color-text-primary:    #0F0F14;
+  --color-text-secondary:  #72727E;
+  --color-text-muted:      #A0A0AE;
+
+  --color-accent:          #4F7FFA;
+  --color-accent-pressed:  #3A65D4;
+  --color-accent-glow:     rgba(79, 127, 250, 0.15);
+
+  --color-primary:         #0F0F14;
+  --color-primary-pressed: #000000;
+
+  --skeleton-from:  #E8E8EC;
+  --skeleton-to:    #D8D8DF;
+  --grain-opacity:  0;
+
+  --chart-grid:    #D8D8DF;
+  --chart-text:    #72727E;
+}
+
+/* ── Base ───────────────────────────────────────────────────────────────────── */
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-text-primary);
+    font-family: Geist, system-ui, sans-serif;
+    overscroll-behavior: none;
+    position: relative;
+  }
+
+  /* Subtle noise grain overlay for depth */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: var(--grain-opacity);
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='1'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-size: 128px 128px;
+  }
+
+  * {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Remove number spinners */
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+
+  select {
+    background-color: var(--color-surface-raised);
+    color: var(--color-text-primary);
+    border-color: var(--color-border);
+  }
+}
+
+/* ── Utilities ──────────────────────────────────────────────────────────────── */
+@layer utilities {
+  /* Safe area */
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+  .safe-top    { padding-top:    env(safe-area-inset-top); }
+  .pb-safe     { padding-bottom: calc(env(safe-area-inset-bottom) + 1rem); }
+
+  /* Scrollbar */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+
+  /* Monospace numeric */
+  .font-numeric {
+    font-family: 'DM Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Skeleton shimmer */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--skeleton-from) 25%,
+      var(--skeleton-to)   50%,
+      var(--skeleton-from) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s infinite;
+  }
+
+  /* Micro-interactions */
+  .active\:scale-97:active { transform: scale(0.97); }
+  .active\:scale-95:active { transform: scale(0.95); }
+
+  /* Touch target helper */
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ── Theme-aware glass backgrounds ────────────────────────────────────────
+     Use these instead of bg-surface-card/95 since CSS-var colors don't
+     support Tailwind opacity modifiers (/<alpha>). */
+  .bg-glass {
+    background-color: rgba(17, 17, 24, 0.92);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+  }
+  .light .bg-glass {
+    background-color: rgba(255, 255, 255, 0.92);
+  }
+
+  /* Nav/header bars */
+  .bg-nav {
+    background-color: rgba(17, 17, 24, 0.90);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+  }
+  .light .bg-nav {
+    background-color: rgba(255, 255, 255, 0.90);
+  }
+
+  /* Faded gradient footer (FAB area) */
+  .bg-fade-up {
+    background: linear-gradient(to top, var(--color-background) 55%, transparent);
+  }
+
+  /* Divider with fade */
+  .divider-fade {
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--color-border) 30%,
+      var(--color-border) 70%,
+      transparent
+    );
+    height: 1px;
+  }
+
+  /* Accent pill (monospace stat badge) */
+  .accent-pill {
+    display: inline-flex;
+    align-items: center;
+    background: var(--color-accent-glow);
+    color: var(--color-accent);
+    border: 1px solid rgba(79, 127, 250, 0.22);
+    border-radius: 9999px;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    font-family: 'DM Mono', monospace;
+    line-height: 1.4;
+    letter-spacing: -0.01em;
+  }
+
+  /* Primary pill (monospace stat badge - text in primary color) */
+  .primary-pill {
+    display: inline-flex;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.05);
+    color: var(--color-primary);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 9999px;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    font-family: 'DM Mono', monospace;
+    line-height: 1.4;
+    letter-spacing: -0.01em;
+  }
+
+  .light .primary-pill {
+    background: rgba(79, 127, 250, 0.08);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+  }
+
+  /* Surface aliases using CSS vars (always theme-aware) */
+  .bg-surface-base    { background-color: var(--color-background); }
+  .bg-surface-card    { background-color: var(--color-surface-card); }
+  .bg-surface-raised  { background-color: var(--color-surface-raised); }
+  .bg-surface-overlay { background-color: var(--color-surface-overlay); }
+
+  /* Text aliases */
+  .text-text-primary   { color: var(--color-text-primary); }
+  .text-text-secondary { color: var(--color-text-secondary); }
+  .text-text-muted     { color: var(--color-text-muted); }
+
+  /* Border aliases */
+  .border-border  { border-color: var(--color-border); }
+}
+
+/* ── Light mode form overrides ──────────────────────────────────────────────── */
+.light input,
+.light textarea,
+.light select {
+  background-color: var(--color-surface-card);
+  color: var(--color-text-primary);
+  border-color: var(--color-border);
+}
+
+.light input::placeholder,
+.light textarea::placeholder {
+  color: var(--color-text-muted);
+}
+
+.light input:focus,
+.light textarea:focus,
+.light select:focus {
+  border-color: var(--color-accent);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(79, 127, 250, 0.12);
+}
+
+/* ── Touch drag & drop optimization ─────────────────────────────────────────── */
+.touch-action-none {
+  touch-action: none;
+}
