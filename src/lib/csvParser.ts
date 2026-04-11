@@ -1,5 +1,5 @@
-import type { Exercise, Session, WorkoutSet, SessionExercise } from '@/types/entities';
-import { db } from '@/db/schema';
+import type { Exercise, ExerciseType, Session, WorkoutSet, SessionExercise } from '@/types/entities';
+import { db, MUSCLE_GROUP_NAMES } from '@/db/schema';
 
 export interface CSVRow {
   date: string;
@@ -13,9 +13,6 @@ export interface CSVRow {
   time?: string;
 }
 
-/**
- * Parse CSV content and return rows
- */
 export function parseCSV(content: string): CSVRow[] {
   const lines = content.trim().split('\n');
   if (lines.length < 2) return [];
@@ -43,9 +40,6 @@ export function parseCSV(content: string): CSVRow[] {
   return rows;
 }
 
-/**
- * Parse a CSV line properly handling quotes
- */
 function parseCSVLine(line: string): string[] {
   const result: string[] = [];
   let current = '';
@@ -74,9 +68,6 @@ function parseCSVLine(line: string): string[] {
   return result;
 }
 
-/**
- * Extract unique exercises from CSV rows
- */
 export function extractUniqueExercises(rows: CSVRow[]): Map<string, string> {
   const exercises = new Map<string, string>();
   rows.forEach((row) => {
@@ -87,29 +78,26 @@ export function extractUniqueExercises(rows: CSVRow[]): Map<string, string> {
   return exercises;
 }
 
-/**
- * Map CSV categories to muscle group IDs
- */
 export function mapCategoryToMuscleGroup(category: string): string | null {
   const categoryLower = category.toLowerCase();
-  
+
   const mapping: Record<string, string[]> = {
     'mg-chest': ['chest', 'pec'],
-    'mg-back': ['back', 'lat', 'row', 'dos', 'tirage'],
+    'mg-back': ['back', 'lat', 'row', 'dos', 'tirage', 'lower back'],
     'mg-shoulders': ['shoulder', 'deltoid', 'delt', 'épaule', 'trapèze'],
     'mg-biceps': ['biceps', 'bicep', 'arm curl'],
     'mg-triceps': ['triceps', 'tricep', 'arm extension'],
-    'mg-forearms': ['forearm', 'wrist', 'avant', 'bra'],
-    'mg-quads': ['quad', 'quads', 'quadriceps', 'leg extension'],
-    'mg-hamstrings': ['hamstring', 'hamstrings'],
-    'mg-glutes': ['glute', 'glutes', 'butt', 'fessier'],
-    'mg-calves': ['calf', 'calves', 'calf raise'],
-    'mg-abs': ['abs', 'ab', 'core', 'abdominal', 'crunch'],
-    'mg-cardio': ['cardio', 'running', 'cycling', 'treadmill', 'rowing', 'swimming', 'walking', 'stationary bike'],
+    'mg-forearms': ['forearm', 'wrist', 'avant bras', 'avant-bras'],
+    'mg-quads': ['quad', 'quadriceps', 'leg extension', 'legs', 'full body'],
+    'mg-hamstrings': ['hamstring'],
+    'mg-glutes': ['glute', 'butt', 'fessier'],
+    'mg-calves': ['calf', 'calves'],
+    'mg-abs': ['abs', 'abdominal', 'core', 'crunch', 'neck'],
+    'mg-cardio': ['cardio', 'cardiovascular', 'running', 'cycling', 'treadmill', 'rowing', 'swimming', 'walking'],
   };
 
   for (const [groupId, keywords] of Object.entries(mapping)) {
-    if (keywords.some((kw) => categoryLower.includes(kw))) {
+    if (keywords.some((kw) => categoryLower === kw || categoryLower.includes(kw))) {
       return groupId;
     }
   }
@@ -117,39 +105,54 @@ export function mapCategoryToMuscleGroup(category: string): string | null {
   return null;
 }
 
-/**
- * Check if exercise exists in database
- */
+// After v2 migration the mg-xxx IDs are replaced with UUIDs — resolve via name
+async function resolveMuscleGroupUUID(legacyKey: string): Promise<string | null> {
+  const direct = await db.muscleGroups.get(legacyKey);
+  if (direct) return direct.id;
+  const name = MUSCLE_GROUP_NAMES[legacyKey];
+  if (!name) return null;
+  const mg = await db.muscleGroups.where('name').equals(name).first();
+  return mg?.id ?? null;
+}
+
+function inferExerciseType(rows: CSVRow[]): ExerciseType {
+  const first = rows[0];
+  if (first.distance && !isNaN(first.distance) && first.distance > 0) return 'distance';
+  if (first.time && first.time !== '00:00:00' && first.time !== '') return 'duration';
+  if (first.reps && first.reps > 0 && (!first.weight || isNaN(first.weight) || first.weight === 0)) return 'bodyweight_reps';
+  return 'weight_reps';
+}
+
+function parseTimeToSeconds(time: string): number {
+  const parts = time.split(':').map(Number);
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return 0;
+}
+
+function toMeters(distance: number, unit: string): number {
+  if (unit === 'miles') return Math.round(distance * 1609.34);
+  return Math.round(distance * 1000); // km → meters
+}
+
 export async function exerciseExists(name: string): Promise<boolean> {
-  const exercise = await db.exercises
-    .where('name')
-    .equalsIgnoreCase(name)
-    .first();
+  const exercise = await db.exercises.where('name').equalsIgnoreCase(name).first();
   return !!exercise;
 }
 
-/**
- * Get or create exercise
- */
-export async function getOrCreateExercise(
-  name: string,
-  muscleGroupId: string
-): Promise<Exercise> {
-  const existing = await db.exercises
-    .where('name')
-    .equalsIgnoreCase(name)
-    .first();
+export async function getOrCreateExercise(name: string, legacyKey: string, type: ExerciseType): Promise<Exercise | null> {
+  const existing = await db.exercises.where('name').equalsIgnoreCase(name).first();
+  if (existing) return existing;
 
-  if (existing) {
-    return existing;
-  }
+  const muscleGroupId = await resolveMuscleGroupUUID(legacyKey);
+  if (!muscleGroupId) return null;
 
   const exercise: Exercise = {
     id: crypto.randomUUID(),
     name,
     muscleGroupId,
-    type: 'weight_reps',
-    isCustom: true,
+    type,
+    isCustom: false,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -158,9 +161,6 @@ export async function getOrCreateExercise(
   return exercise;
 }
 
-/**
- * Import CSV data into the database
- */
 export async function importCSVData(rows: CSVRow[]) {
   const results = {
     sessionsCreated: 0,
@@ -169,7 +169,7 @@ export async function importCSVData(rows: CSVRow[]) {
     errors: [] as string[],
   };
 
-  // Group rows by date and exercise
+  // Group rows by date → exercise
   const sessionMap = new Map<string, Map<string, CSVRow[]>>();
 
   for (const row of rows) {
@@ -178,25 +178,17 @@ export async function importCSVData(rows: CSVRow[]) {
       continue;
     }
 
-    if (!sessionMap.has(row.date)) {
-      sessionMap.set(row.date, new Map());
-    }
-
+    if (!sessionMap.has(row.date)) sessionMap.set(row.date, new Map());
     const sessionExercises = sessionMap.get(row.date)!;
-    if (!sessionExercises.has(row.exercise)) {
-      sessionExercises.set(row.exercise, []);
-    }
-
+    if (!sessionExercises.has(row.exercise)) sessionExercises.set(row.exercise, []);
     sessionExercises.get(row.exercise)!.push(row);
   }
 
-  // Create sessions and sets
   for (const [date, exercises] of sessionMap) {
     try {
       const session: Session = {
-        id: `session-${Math.random().toString(36).substr(2, 9)}`,
+        id: crypto.randomUUID(),
         date,
-        templateId: undefined,
         notes: '',
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -207,24 +199,30 @@ export async function importCSVData(rows: CSVRow[]) {
 
       let exerciseOrder = 0;
 
-      for (const [exerciseName, rows] of exercises) {
-        // Find muscle group
-        const categoryName = rows[0].category;
-        const muscleGroupId = mapCategoryToMuscleGroup(categoryName);
+      for (const [exerciseName, exerciseRows] of exercises) {
+        const categoryName = exerciseRows[0].category;
+        const legacyKey = mapCategoryToMuscleGroup(categoryName);
 
-        if (!muscleGroupId) {
-          results.errors.push(
-            `Could not map category "${categoryName}" for exercise "${exerciseName}"`
-          );
+        if (!legacyKey) {
+          results.errors.push(`Could not map category "${categoryName}" for exercise "${exerciseName}"`);
           continue;
         }
 
-        // Get or create exercise
-        const exercise = await getOrCreateExercise(exerciseName, muscleGroupId);
+        const type = inferExerciseType(exerciseRows);
+        const exercise = await getOrCreateExercise(exerciseName, legacyKey, type);
+
+        if (!exercise) {
+          results.errors.push(`Could not resolve muscle group for "${exerciseName}" (${categoryName})`);
+          continue;
+        }
+
+        if (exercise.createdAt.getTime() === exercise.updatedAt.getTime()) {
+          results.exercisesCreated++;
+        }
 
         const now = new Date();
         const sessionExercise: SessionExercise = {
-          id: `se-${Math.random().toString(36).substr(2, 9)}`,
+          id: crypto.randomUUID(),
           sessionId: session.id,
           exerciseId: exercise.id,
           notes: '',
@@ -235,25 +233,37 @@ export async function importCSVData(rows: CSVRow[]) {
 
         await db.sessionExercises.add(sessionExercise);
 
-        // Add sets
         let setOrder = 0;
-        for (const row of rows) {
-          if (row.weight && !isNaN(row.weight) && row.weight > 0 && row.reps && row.reps > 0) {
-            const set: WorkoutSet = {
-              id: `set-${Math.random().toString(36).substr(2, 9)}`,
-              sessionExerciseId: sessionExercise.id,
-              weight: row.weight,
-              reps: row.reps,
-              isWarmup: false,
-              completedAt: new Date(),
-              order: setOrder++,
-              createdAt: now,
-              updatedAt: now,
-            };
+        for (const row of exerciseRows) {
+          const set: Partial<WorkoutSet> & Pick<WorkoutSet, 'id' | 'sessionExerciseId' | 'order' | 'isWarmup' | 'createdAt' | 'updatedAt'> = {
+            id: crypto.randomUUID(),
+            sessionExerciseId: sessionExercise.id,
+            isWarmup: false,
+            order: setOrder++,
+            completedAt: new Date(),
+            createdAt: now,
+            updatedAt: now,
+          };
 
-            await db.sets.add(set);
-            results.setsCreated++;
+          if (type === 'weight_reps' || type === 'bodyweight_reps') {
+            if ((!row.reps || row.reps <= 0)) continue;
+            set.reps = row.reps;
+            if (row.weight && !isNaN(row.weight) && row.weight > 0) set.weight = row.weight;
+          } else if (type === 'duration') {
+            const secs = row.time ? parseTimeToSeconds(row.time) : 0;
+            if (secs <= 0) continue;
+            set.duration = secs;
+          } else if (type === 'distance') {
+            if (!row.distance || isNaN(row.distance) || row.distance <= 0) continue;
+            set.distance = toMeters(row.distance, row.distanceUnit ?? 'km');
+            if (row.time) {
+              const secs = parseTimeToSeconds(row.time);
+              if (secs > 0) set.duration = secs;
+            }
           }
+
+          await db.sets.add(set as WorkoutSet);
+          results.setsCreated++;
         }
       }
     } catch (error) {
@@ -264,9 +274,6 @@ export async function importCSVData(rows: CSVRow[]) {
   return results;
 }
 
-/**
- * Validate CSV and return summary
- */
 export async function validateCSV(rows: CSVRow[]) {
   const summary = {
     totalRows: rows.length,
@@ -282,14 +289,10 @@ export async function validateCSV(rows: CSVRow[]) {
     summary.uniqueExercises.add(exerciseName);
 
     const muscleGroupId = mapCategoryToMuscleGroup(category);
-    if (!muscleGroupId) {
-      summary.unmappedCategories.add(category);
-    }
+    if (!muscleGroupId) summary.unmappedCategories.add(category);
 
     const exists = await exerciseExists(exerciseName);
-    if (!exists) {
-      summary.missingExercises.push(exerciseName);
-    }
+    if (!exists) summary.missingExercises.push(exerciseName);
   }
 
   const dates = rows.map((r) => r.date).filter(Boolean).sort();
