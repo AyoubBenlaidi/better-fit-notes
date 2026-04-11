@@ -9,7 +9,7 @@ import { toast } from '@/components/ui/Toast';
 import { useAuthStore } from '@/stores/authStore';
 import { signOut } from '@/domains/auth/hooks/useAuth';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import { clearSyncQueue } from '@/lib/sync';
+import { clearSyncQueue, pushAllLocalData } from '@/lib/sync';
 import { clsx } from 'clsx';
 import { parseCSV, validateCSV, importCSVData } from '@/lib/csvParser';
 
@@ -148,6 +148,11 @@ export function SettingsPage() {
 
         // Import data
         const result = await importCSVData(rows);
+
+        // Push imported data to Supabase if the user is authenticated
+        if (user) {
+          pushAllLocalData(user.id).catch(console.error);
+        }
 
         let message = `Imported ${result.sessionsCreated} sessions and ${result.setsCreated} sets`;
         if (result.exercisesCreated > 0) {

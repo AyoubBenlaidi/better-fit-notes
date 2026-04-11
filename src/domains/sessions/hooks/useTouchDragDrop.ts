@@ -1,107 +1,86 @@
 import { useState, useRef, useCallback } from 'react';
 
-export interface TouchDragDropState {
+export interface TouchDragState {
   draggedId: string | null;
   dragOverId: string | null;
-  offsetY: number;
   isDragging: boolean;
 }
 
-export function useTouchDragDrop() {
-  const [state, setState] = useState<TouchDragDropState>({
+/**
+ * Touch drag-and-drop via document-level listeners + elementFromPoint.
+ * Attach handleGripTouchStart to the drag handle only — the rest is managed
+ * at document level so scroll is never blocked outside of an active drag.
+ */
+export function useTouchDragDrop(onDrop: (sourceId: string, targetId: string) => void) {
+  const [state, setState] = useState<TouchDragState>({
     draggedId: null,
     dragOverId: null,
-    offsetY: 0,
     isDragging: false,
   });
-  
-  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
-  const draggedElementRef = useRef<HTMLElement | null>(null);
-  const isDraggingRef = useRef(false);
-  const startTimeRef = useRef<number>(0);
 
-  const handleTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>, id: string) => {
-    const touch = e.touches[0];
-    if (!touch) return;
-    
-    touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
-    startTimeRef.current = Date.now();
-    isDraggingRef.current = false;
-    setState((prev) => ({ ...prev, draggedId: id, isDragging: false }));
-    draggedElementRef.current = e.currentTarget;
-  }, []);
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
-  const handleTouchMove = useCallback((e: React.TouchEvent<HTMLDivElement>, id: string) => {
-    if (!touchStartPosRef.current) return;
+  const onDropRef = useRef(onDrop);
+  onDropRef.current = onDrop;
 
-    const touch = e.touches[0];
-    if (!touch) return;
-
-    const deltaX = touch.clientX - touchStartPosRef.current.x;
-    const deltaY = touch.clientY - touchStartPosRef.current.y;
-    const absDeltaX = Math.abs(deltaX);
-    const absDeltaY = Math.abs(deltaY);
-
-    // Start dragging if moved more than 12px vertically (ignore small movements)
-    // and vertical movement is greater than horizontal (to avoid interfering with horizontal scroll)
-    if (!isDraggingRef.current && absDeltaY > 12 && absDeltaY > absDeltaX) {
-      isDraggingRef.current = true;
-      setState((prev) => ({ ...prev, isDragging: true }));
-      
-      // Prevent default to stop scrolling
-      e.preventDefault();
-      
-      // Add visual feedback
-      if (draggedElementRef.current) {
-        draggedElementRef.current.style.opacity = '0.6';
-        draggedElementRef.current.style.pointerEvents = 'none';
-        draggedElementRef.current.style.zIndex = '50';
-      }
-    }
-
-    if (isDraggingRef.current) {
-      e.preventDefault();
-      setState((prev) => ({
-        ...prev,
-        dragOverId: id,
-        offsetY: deltaY,
-      }));
-    }
-  }, []);
-
-  const handleTouchEnd = useCallback((_e: React.TouchEvent<HTMLDivElement>) => {
-    if (draggedElementRef.current) {
-      draggedElementRef.current.style.opacity = '1';
-      draggedElementRef.current.style.pointerEvents = 'auto';
-      draggedElementRef.current.style.zIndex = '';
-    }
-    touchStartPosRef.current = null;
-    startTimeRef.current = 0;
-    isDraggingRef.current = false;
-  }, []);
+  // Guard: only one drag at a time
+  const activeRef = useRef(false);
 
   const reset = useCallback(() => {
-    setState({
-      draggedId: null,
-      dragOverId: null,
-      offsetY: 0,
-      isDragging: false,
-    });
-    if (draggedElementRef.current) {
-      draggedElementRef.current.style.opacity = '1';
-      draggedElementRef.current.style.pointerEvents = 'auto';
-      draggedElementRef.current.style.zIndex = '';
-    }
-    isDraggingRef.current = false;
-    touchStartPosRef.current = null;
-    startTimeRef.current = 0;
+    activeRef.current = false;
+    setState({ draggedId: null, dragOverId: null, isDragging: false });
   }, []);
 
-  return {
-    state,
-    handleTouchStart,
-    handleTouchMove,
-    handleTouchEnd,
-    reset,
-  };
+  const handleGripTouchStart = useCallback(
+    (e: React.TouchEvent, id: string) => {
+      if (activeRef.current) return;
+      const touch = e.touches[0];
+      if (!touch) return;
+
+      activeRef.current = true;
+      const startY = touch.clientY;
+      let dragging = false;
+
+      setState({ draggedId: id, dragOverId: null, isDragging: false });
+
+      function onMove(ev: TouchEvent) {
+        const t = ev.touches[0];
+        if (!t) return;
+
+        if (!dragging) {
+          if (Math.abs(t.clientY - startY) < 8) return;
+          dragging = true;
+          setState((prev) => ({ ...prev, isDragging: true }));
+        }
+
+        // Suppress scroll only while actively dragging
+        ev.preventDefault();
+
+        // Detect which ExerciseBlock is under the finger via data-se-id
+        const els = document.elementsFromPoint(t.clientX, t.clientY);
+        const target = els.find(
+          (el): el is HTMLElement =>
+            el instanceof HTMLElement && el.dataset.seId !== undefined,
+        );
+        const hoveredId = target?.dataset.seId ?? null;
+        setState((prev) => ({ ...prev, dragOverId: hoveredId }));
+      }
+
+      function onEnd() {
+        document.removeEventListener('touchmove', onMove);
+        const { draggedId, dragOverId } = stateRef.current;
+        if (dragging && draggedId && dragOverId && draggedId !== dragOverId) {
+          onDropRef.current(draggedId, dragOverId);
+        }
+        reset();
+      }
+
+      document.addEventListener('touchmove', onMove, { passive: false });
+      document.addEventListener('touchend', onEnd, { once: true });
+    },
+    [reset],
+  );
+
+  return { state, handleGripTouchStart };
 }

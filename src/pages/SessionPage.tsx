@@ -29,7 +29,9 @@ export function SessionPage() {
   const sessionExercises = useSessionExercises(id!);
   const addExercise = useAddExerciseToSession();
   const reorder = useReorderSessionExercises();
-  const touchDragDrop = useTouchDragDrop();
+  const touchDragDrop = useTouchDragDrop((sourceId, targetId) => {
+    reorder.mutate({ sourceId, targetId });
+  });
 
   async function handleAddExercise(exercise: Exercise) {
     if (!id) return;
@@ -49,16 +51,6 @@ export function SessionPage() {
     await reorder.mutateAsync({ sourceId: draggedExerciseId, targetId: targetSessionExerciseId });
     setDraggedExerciseId(null);
     setDragOverExerciseId(null);
-  }
-
-  async function handleTouchDrop(targetSessionExerciseId: string) {
-    const sourceId = touchDragDrop.state.draggedId;
-    if (!sourceId || sourceId === targetSessionExerciseId) {
-      touchDragDrop.reset();
-      return;
-    }
-    await reorder.mutateAsync({ sourceId, targetId: targetSessionExerciseId });
-    touchDragDrop.reset();
   }
 
   const existingExerciseIds = sessionExercises?.map((se) => se.exerciseId) ?? [];
@@ -186,10 +178,7 @@ export function SessionPage() {
             onDragLeave={() => setDragOverExerciseId(null)}
             onDrop={(eid, e) => { e.preventDefault(); e.stopPropagation(); handleExerciseDrop(eid); }}
             isDragOver={dragOverExerciseId === se.id}
-            onTouchStart={(eid, e) => touchDragDrop.handleTouchStart(e, eid)}
-            onTouchMove={(eid, e) => touchDragDrop.handleTouchMove(e, eid)}
-            onTouchEnd={(e) => touchDragDrop.handleTouchEnd(e)}
-            onTouchDrop={async (eid) => handleTouchDrop(eid)}
+            onGripTouchStart={(eid, e) => touchDragDrop.handleGripTouchStart(e, eid)}
             isTouchDraggedOver={
               touchDragDrop.state.draggedId !== null &&
               touchDragDrop.state.dragOverId === se.id

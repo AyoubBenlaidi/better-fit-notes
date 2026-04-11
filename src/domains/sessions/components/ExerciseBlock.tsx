@@ -20,10 +20,7 @@ interface ExerciseBlockProps {
   onDragLeave?: (e: React.DragEvent<HTMLDivElement>) => void;
   onDrop?: (sessionExerciseId: string, e: React.DragEvent<HTMLDivElement>) => void;
   isDragOver?: boolean;
-  onTouchStart?: (sessionExerciseId: string, e: React.TouchEvent<HTMLDivElement>) => void;
-  onTouchMove?: (sessionExerciseId: string, e: React.TouchEvent<HTMLDivElement>) => void;
-  onTouchEnd?: (e: React.TouchEvent<HTMLDivElement>) => void;
-  onTouchDrop?: (sessionExerciseId: string) => Promise<void>;
+  onGripTouchStart?: (sessionExerciseId: string, e: React.TouchEvent) => void;
   isTouchDraggedOver?: boolean;
 }
 
@@ -34,10 +31,7 @@ export function ExerciseBlock({
   onDragLeave,
   onDrop,
   isDragOver,
-  onTouchStart,
-  onTouchMove,
-  onTouchEnd,
-  onTouchDrop,
+  onGripTouchStart,
   isTouchDraggedOver,
 }: ExerciseBlockProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -104,20 +98,15 @@ export function ExerciseBlock({
   return (
     <div
       draggable
+      data-se-id={sessionExercise.id}
       onDragStart={(e) => onDragStart?.(sessionExercise.id, e)}
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; onDragOver?.(e); }}
       onDragLeave={(e) => { if ((e.target as HTMLElement) === e.currentTarget) onDragLeave?.(e); }}
       onDrop={(e) => { e.preventDefault(); e.stopPropagation(); onDrop?.(sessionExercise.id, e); }}
-      onTouchStart={(e) => onTouchStart?.(sessionExercise.id, e)}
-      onTouchMove={(e) => onTouchMove?.(sessionExercise.id, e)}
-      onTouchEnd={(e) => {
-        onTouchEnd?.(e);
-        if (isTouchDraggedOver) onTouchDrop?.(sessionExercise.id);
-      }}
       className={clsx(
         'relative bg-surface-card rounded-2xl mx-3 my-2',
         'border border-border/60 overflow-hidden',
-        'transition-all duration-medium touch-action-none',
+        'transition-all duration-medium',
         (isDragOver || isTouchDraggedOver) && 'ring-2 ring-accent/40 shadow-accent-glow scale-[1.01]',
       )}
     >
@@ -130,7 +119,10 @@ export function ExerciseBlock({
       {/* Exercise header */}
       <div className="flex items-center gap-2 pl-4 pr-3 pt-3 pb-2.5">
         {/* Drag handle */}
-        <div className="cursor-move text-text-muted flex-shrink-0 -ml-1 touch-none">
+        <div
+          className="cursor-move text-text-muted flex-shrink-0 -ml-1 touch-none"
+          onTouchStart={(e) => onGripTouchStart?.(sessionExercise.id, e)}
+        >
           <GripVertical size={15} strokeWidth={1.5} />
         </div>
 

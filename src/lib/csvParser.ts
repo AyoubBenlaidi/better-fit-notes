@@ -142,9 +142,13 @@ export async function exerciseExists(name: string): Promise<boolean> {
   return !!exercise;
 }
 
-export async function getOrCreateExercise(name: string, legacyKey: string, type: ExerciseType): Promise<Exercise | null> {
+export async function getOrCreateExercise(
+  name: string,
+  legacyKey: string,
+  type: ExerciseType,
+): Promise<{ exercise: Exercise; created: boolean } | null> {
   const existing = await db.exercises.where('name').equalsIgnoreCase(name).first();
-  if (existing) return existing;
+  if (existing) return { exercise: existing, created: false };
 
   const muscleGroupId = await resolveMuscleGroupUUID(legacyKey);
   if (!muscleGroupId) return null;
@@ -160,7 +164,7 @@ export async function getOrCreateExercise(name: string, legacyKey: string, type:
   };
 
   await db.exercises.add(exercise);
-  return exercise;
+  return { exercise, created: true };
 }
 
 export async function importCSVData(rows: CSVRow[]) {
@@ -211,16 +215,15 @@ export async function importCSVData(rows: CSVRow[]) {
         }
 
         const type = inferExerciseType(exerciseRows);
-        const exercise = await getOrCreateExercise(exerciseName, legacyKey, type);
+        const result = await getOrCreateExercise(exerciseName, legacyKey, type);
 
-        if (!exercise) {
+        if (!result) {
           results.errors.push(`Could not resolve muscle group for "${exerciseName}" (${categoryName})`);
           continue;
         }
 
-        if (exercise.createdAt.getTime() === exercise.updatedAt.getTime()) {
-          results.exercisesCreated++;
-        }
+        const { exercise } = result;
+        if (result.created) results.exercisesCreated++;
 
         const now = new Date();
         const sessionExercise: SessionExercise = {

@@ -189,10 +189,10 @@ export async function pullFromSupabase(userId: string) {
 
 /**
  * Upsert all local Dexie data to Supabase.
- * Idempotent (uses onConflict: 'id') — safe to run on every login.
+ * Idempotent (uses onConflict: 'id') — safe to run on every login or after bulk import.
  * Order respects Supabase FK constraints.
  */
-async function pushAllLocalData(userId: string) {
+export async function pushAllLocalData(userId: string) {
   if (!supabase) return;
   console.log('[Sync] 📤 Pushing all local data…');
 
