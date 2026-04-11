@@ -192,6 +192,8 @@ export async function pullFromSupabase(userId: string) {
  * Idempotent (uses onConflict: 'id') — safe to run on every login or after bulk import.
  * Order respects Supabase FK constraints.
  */
+const UPSERT_CHUNK_SIZE = 400;
+
 export async function pushAllLocalData(userId: string) {
   if (!supabase) return;
   console.log('[Sync] 📤 Pushing all local data…');
@@ -199,11 +201,18 @@ export async function pushAllLocalData(userId: string) {
   const upsert = async (table: string, rows: Record<string, unknown>[]) => {
     if (rows.length === 0) return;
     const snakeRows = rows.map((r) => toSnakeCase({ ...r, userId }));
-    const { error } = await supabase!
-      .from(mapTable(table))
-      .upsert(snakeRows, { onConflict: 'id' });
-    if (error) console.error(`[Sync] ❌ Failed to push ${table}`, error);
-    else console.log(`[Sync]   ${table}: pushed ${rows.length}`);
+    // Chunk to stay within PostgREST request-size limits
+    for (let i = 0; i < snakeRows.length; i += UPSERT_CHUNK_SIZE) {
+      const chunk = snakeRows.slice(i, i + UPSERT_CHUNK_SIZE);
+      const { error } = await supabase!
+        .from(mapTable(table))
+        .upsert(chunk, { onConflict: 'id' });
+      if (error) {
+        console.error(`[Sync] ❌ Failed to push ${table} (chunk ${i / UPSERT_CHUNK_SIZE + 1})`, error);
+        return; // stop on first chunk error
+      }
+    }
+    console.log(`[Sync]   ${table}: pushed ${rows.length}`);
   };
 
   // 1. muscle_groups — no FK deps
