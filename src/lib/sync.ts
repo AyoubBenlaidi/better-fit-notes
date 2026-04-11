@@ -216,7 +216,11 @@ export async function pushAllLocalData(userId: string) {
   };
 
   // 1. muscle_groups — no FK deps
-  const muscleGroups = (await db.muscleGroups.toArray()).filter((mg) => isUUID(mg.id));
+  // MuscleGroup has no createdAt/updatedAt locally but Supabase requires them
+  const now = new Date().toISOString();
+  const muscleGroups = (await db.muscleGroups.toArray())
+    .filter((mg) => isUUID(mg.id))
+    .map((mg) => ({ ...mg, createdAt: now, updatedAt: now }));
   await upsert('muscleGroups', muscleGroups as unknown as Record<string, unknown>[]);
 
   // 2. exercises — FK → muscle_groups (guard both id and muscleGroupId)
