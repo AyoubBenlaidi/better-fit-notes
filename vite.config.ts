@@ -18,8 +18,7 @@ export default defineConfig({
         manualChunks: (id: string) => {
           if (id.includes('recharts')) return 'charts';
           if (id.includes('@supabase')) return 'supabase';
-          if (id.includes('dexie')) return 'db';
-          if (id.includes('react-hook-form') || id.includes('@hookform') || id.includes('/zod/')) return 'forms';
+if (id.includes('react-hook-form') || id.includes('@hookform') || id.includes('/zod/')) return 'forms';
           if (id.includes('react-router')) return 'router';
           if (id.includes('@tanstack')) return 'query';
           if (id.includes('date-fns') || id.includes('lucide-react') || id.includes('/clsx/')) return 'utils';

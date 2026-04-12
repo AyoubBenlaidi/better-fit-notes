@@ -21,6 +21,7 @@ import { useAuthStore } from '@/stores/authStore';
 import {
   getSessions, getMuscleGroups, getExercises,
   getAnalyticsData, getSessionExercisesInRange,
+  getSessionIdsWithExercises,
   getPersonalRecords, getExerciseChartData,
 } from '@/lib/api';
 
@@ -111,6 +112,14 @@ function OverviewTab() {
   const { data: muscleGroups } = useQuery({ queryKey: ['muscleGroups', user?.id], queryFn: () => getMuscleGroups(user!.id), enabled: !!user, staleTime: Infinity });
   const { data: allExercises } = useQuery({ queryKey: ['exercises', user?.id], queryFn: () => getExercises(user!.id), enabled: !!user, staleTime: Infinity });
 
+  // Lightweight query: which sessions have at least one exercise (for accurate counts)
+  const { data: activeSessionIds } = useQuery({
+    queryKey: ['activeSessionIds', user?.id],
+    queryFn: () => getSessionIdsWithExercises(user!.id),
+    enabled: !!user,
+    staleTime: 5 * 60 * 1000,
+  });
+
   // SEs + sets scoped to selected period — re-fetches only when period changes
   const { data: analyticsData } = useQuery({
     queryKey: ['analyticsData', user?.id, pStart, pEnd],
@@ -132,8 +141,8 @@ function OverviewTab() {
 
   const weeklyData = useMemo(() => {
     if (!sessions || !analyticsData || !allExercises) return [];
-    return getWeeklyBreakdown(sessions, analyticsData.sessionExercises, analyticsData.sets, allExercises, periodType);
-  }, [sessions, analyticsData, allExercises, periodType]);
+    return getWeeklyBreakdown(sessions, analyticsData.sessionExercises, analyticsData.sets, allExercises, periodType, activeSessionIds);
+  }, [sessions, analyticsData, allExercises, periodType, activeSessionIds]);
 
   const totalVolume = useMemo(() => {
     if (!sessions || !analyticsData || !allExercises) return 0;
@@ -159,6 +168,11 @@ function OverviewTab() {
   const thisWeek = weeklyData[weeklyData.length - 1];
   const thirtyDaysAgo = format(subDays(new Date(), 30), 'yyyy-MM-dd');
 
+  const activeSessions = useMemo(
+    () => (sessions ?? []).filter((s) => !activeSessionIds || activeSessionIds.has(s.id)),
+    [sessions, activeSessionIds],
+  );
+
   if (!sessions) return <SkeletonList count={3} />;
 
   const periodButtons: { value: PeriodType; label: string }[] = [
@@ -169,9 +183,9 @@ function OverviewTab() {
   return (
     <div className="flex flex-col gap-4 p-4">
       <div className="grid grid-cols-3 gap-2">
-        <StatCard label="Total" value={sessions.length} sub="sessions" />
+        <StatCard label="Total" value={activeSessions.length} sub="sessions" />
         <StatCard label="This week" value={thisWeek?.sessions ?? 0} sub="sessions" />
-        <StatCard label="30 days" value={sessions.filter((s) => s.date >= thirtyDaysAgo).length} sub="sessions" />
+        <StatCard label="30 days" value={activeSessions.filter((s) => s.date >= thirtyDaysAgo).length} sub="sessions" />
       </div>
 
       <div className="flex flex-col gap-3">

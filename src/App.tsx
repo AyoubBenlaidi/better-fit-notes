@@ -55,7 +55,11 @@ function RequireAuth({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuthStore();
 
   if (!isSupabaseConfigured) return <>{children}</>;
-  if (isLoading) return null;
+  if (isLoading) return (
+    <div className="flex items-center justify-center min-h-dvh bg-surface-base">
+      <div className="h-2 w-2 rounded-full bg-accent animate-bounce" />
+    </div>
+  );
   if (!user) return <Navigate to="/auth" replace />;
   return <>{children}</>;
 }

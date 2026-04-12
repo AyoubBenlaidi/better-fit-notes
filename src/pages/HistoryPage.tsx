@@ -111,7 +111,7 @@ export function HistoryPage() {
 
       {isLoading ? (
         <SkeletonList count={5} />
-      ) : sessions!.length === 0 ? (
+      ) : (sessions?.length ?? 0) === 0 ? (
         <EmptyState
           icon={<Calendar size={48} />}
           title="No workouts yet"

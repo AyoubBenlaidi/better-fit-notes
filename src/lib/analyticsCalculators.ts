@@ -94,7 +94,8 @@ export function getWeeklyBreakdown(
   sessionExercises: SessionExercise[],
   sets: WorkoutSet[],
   exercises: Exercise[],
-  periodType: PeriodType
+  periodType: PeriodType,
+  activeSessionIds?: Set<string>,
 ): { week: string; volume: number; date: Date; sessions: number }[] {
   const config = getPeriodConfig(periodType);
 
@@ -113,7 +114,9 @@ export function getWeeklyBreakdown(
     const ws = format(weekStart, 'yyyy-MM-dd');
     const we = format(weekEnd, 'yyyy-MM-dd');
 
-    const weekSessions = sessions.filter((s) => s.date >= ws && s.date <= we);
+    const weekSessions = sessions.filter(
+      (s) => s.date >= ws && s.date <= we && (!activeSessionIds || activeSessionIds.has(s.id)),
+    );
     const weekSessionIds = new Set(weekSessions.map((s) => s.id));
     const weekSEIds = new Set(
       sessionExercises.filter((se) => weekSessionIds.has(se.sessionId)).map((se) => se.id),

@@ -95,6 +95,14 @@ export async function deleteExercise(id: string): Promise<void> {
 
 // ─── Sessions ─────────────────────────────────────────────────────────────────
 
+/** Returns the set of session IDs that have at least one exercise — lightweight for analytics counts */
+export async function getSessionIdsWithExercises(userId: string): Promise<Set<string>> {
+  const { data, error } = await sb()
+    .from('session_exercises').select('session_id').eq('user_id', userId);
+  if (error) throw error;
+  return new Set((data ?? []).map((r) => r.session_id as string));
+}
+
 export async function getSessions(userId: string): Promise<Session[]> {
   const { data, error } = await sb()
     .from('sessions').select('*').eq('user_id', userId).order('date', { ascending: false });

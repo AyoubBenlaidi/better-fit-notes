@@ -106,7 +106,7 @@ export function TemplatesPage() {
 
       {isLoading ? (
         <SkeletonList count={3} />
-      ) : templates!.length === 0 ? (
+      ) : (templates?.length ?? 0) === 0 ? (
         <EmptyState
           icon={<LayoutTemplate size={48} />}
           title="No templates yet"
@@ -115,7 +115,7 @@ export function TemplatesPage() {
         />
       ) : (
         <div className="grid grid-cols-1 gap-3 p-4">
-          {templates!.map((template) => (
+          {(templates ?? []).map((template) => (
             <div
               key={template.id}
               className="bg-surface-card rounded-2xl p-4 flex items-center gap-3 border border-border/40 shadow-card"
