@@ -119,6 +119,58 @@ export async function createSession(
   return parseRow<Session>(data);
 }
 
+/** Batch-insert sessions — single Supabase call per 500-row chunk */
+export async function batchCreateSessions(
+  userId: string,
+  sessions: { id: string; date: string }[],
+): Promise<void> {
+  const now = new Date();
+  const rows = sessions.map((s) => dbRow({ ...s, createdAt: now, updatedAt: now }, userId));
+  for (const chunk of chunks(rows, 500)) {
+    const { error } = await sb().from('sessions').insert(chunk);
+    if (error) throw error;
+  }
+}
+
+/** Batch-insert exercises — single Supabase call per 500-row chunk */
+export async function batchCreateExercises(
+  userId: string,
+  exercises: Omit<Exercise, 'createdAt' | 'updatedAt'>[],
+): Promise<void> {
+  const now = new Date();
+  const rows = exercises.map((e) => dbRow({ ...e, createdAt: now, updatedAt: now }, userId));
+  for (const chunk of chunks(rows, 500)) {
+    const { error } = await sb().from('exercises').insert(chunk);
+    if (error) throw error;
+  }
+}
+
+/** Batch-insert session exercises — single Supabase call per 500-row chunk */
+export async function batchCreateSessionExercises(
+  userId: string,
+  ses: Omit<SessionExercise, 'createdAt' | 'updatedAt'>[],
+): Promise<void> {
+  const now = new Date();
+  const rows = ses.map((se) => dbRow({ ...se, createdAt: now, updatedAt: now }, userId));
+  for (const chunk of chunks(rows, 500)) {
+    const { error } = await sb().from('session_exercises').insert(chunk);
+    if (error) throw error;
+  }
+}
+
+/** Batch-insert sets — single Supabase call per 500-row chunk */
+export async function batchCreateSets(
+  userId: string,
+  sets: Omit<WorkoutSet, 'createdAt' | 'updatedAt'>[],
+): Promise<void> {
+  const now = new Date();
+  const rows = sets.map((s) => dbRow({ ...s, createdAt: now, updatedAt: now }, userId));
+  for (const chunk of chunks(rows, 500)) {
+    const { error } = await sb().from('sets').insert(chunk);
+    if (error) throw error;
+  }
+}
+
 export async function updateSession(id: string, partial: Partial<Session>): Promise<Session> {
   const r = toSnakeCase({ ...partial, updatedAt: new Date() });
   const { data, error } = await sb().from('sessions').update(r).eq('id', id).select().single();
@@ -409,8 +461,7 @@ export async function computeAndSavePersonalRecords(userId: string, sessionId: s
 
   const { data: allSets } = await sb()
     .from('sets').select('*')
-    .in('session_exercise_id', sessionExercises.map((se) => se.id))
-    .not('completed_at', 'is', null);
+    .in('session_exercise_id', sessionExercises.map((se) => se.id));
 
   for (const se of sessionExercises) {
     const sets = (allSets ?? []).filter((s) => s.session_exercise_id === se.id);

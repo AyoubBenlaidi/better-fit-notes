@@ -76,11 +76,11 @@ export function calculatePeriodVolume(
   let total = 0;
   for (const set of sets) {
     if (!sessionExerciseIds.has(set.sessionExerciseId)) continue;
-    if (!set.completedAt) continue;
     const se = seMap.get(set.sessionExerciseId);
     if (!se) continue;
     if (exercisesByType.get(se.exerciseId) !== 'weight_reps') continue;
-    total += (set.weight ?? 0) * (set.reps ?? 0);
+    if (!set.reps || !set.weight) continue;
+    total += set.weight * set.reps;
   }
 
   return total;
@@ -122,11 +122,11 @@ export function getWeeklyBreakdown(
     let volume = 0;
     for (const set of sets) {
       if (!weekSEIds.has(set.sessionExerciseId)) continue;
-      if (!set.completedAt) continue;
       const se = seMap.get(set.sessionExerciseId);
       if (!se) continue;
       if (exercisesByType.get(se.exerciseId) !== 'weight_reps') continue;
-      volume += (set.weight ?? 0) * (set.reps ?? 0);
+      if (!set.reps || !set.weight) continue;
+      volume += set.weight * set.reps;
     }
 
     return {

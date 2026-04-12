@@ -1,5 +1,10 @@
 import type { ExerciseType } from '@/types/entities';
-import { MUSCLE_GROUP_NAMES, getExercises, getMuscleGroups, createExercise, createSession, createSessionExercise, createSet } from '@/lib/api';
+import {
+  MUSCLE_GROUP_NAMES,
+  getExercises, getMuscleGroups,
+  batchCreateExercises, batchCreateSessions,
+  batchCreateSessionExercises, batchCreateSets,
+} from '@/lib/api';
 
 export interface CSVRow {
   date: string;
@@ -171,7 +176,6 @@ export async function importCSVData(rows: CSVRow[], userId: string) {
     getMuscleGroups(userId),
   ]);
 
-  // Mutable cache so newly created exercises are found in subsequent iterations
   const exerciseCache = new Map(existingExercises.map((e) => [e.name.toLowerCase(), e]));
   const mgByLegacyKey = new Map(
     muscleGroups
@@ -182,92 +186,97 @@ export async function importCSVData(rows: CSVRow[], userId: string) {
       .filter((entry): entry is [string, string] => entry !== null),
   );
 
-  // Group rows by date → exercise
+  // ── Phase 1: group rows by date → exercise ──────────────────────────────────
   const sessionMap = new Map<string, Map<string, CSVRow[]>>();
-
   for (const row of rows) {
     if (!row.date || !row.exercise || !row.category) {
       results.errors.push(`Invalid row: missing date, exercise, or category`);
       continue;
     }
     if (!sessionMap.has(row.date)) sessionMap.set(row.date, new Map());
-    const sessionExercises = sessionMap.get(row.date)!;
-    if (!sessionExercises.has(row.exercise)) sessionExercises.set(row.exercise, []);
-    sessionExercises.get(row.exercise)!.push(row);
+    const exMap = sessionMap.get(row.date)!;
+    if (!exMap.has(row.exercise)) exMap.set(row.exercise, []);
+    exMap.get(row.exercise)!.push(row);
   }
 
-  for (const [date, exercises] of sessionMap) {
-    try {
-      const session = await createSession(userId, { id: crypto.randomUUID(), date });
-      results.sessionsCreated++;
-
-      let exerciseOrder = 0;
-
-      for (const [exerciseName, exerciseRows] of exercises) {
-        const categoryName = exerciseRows[0].category;
-        const legacyKey = mapCategoryToMuscleGroup(categoryName);
-
-        if (!legacyKey) {
-          results.errors.push(`Could not map category "${categoryName}" for exercise "${exerciseName}"`);
-          continue;
-        }
-
-        let exercise = exerciseCache.get(exerciseName.toLowerCase()) ?? null;
-
-        if (!exercise) {
-          const muscleGroupId = mgByLegacyKey.get(legacyKey);
-          if (!muscleGroupId) {
-            results.errors.push(`Could not resolve muscle group for "${exerciseName}" (${categoryName})`);
-            continue;
-          }
-          const type = inferExerciseType(exerciseRows);
-          exercise = await createExercise(userId, { name: exerciseName, muscleGroupId, type, isCustom: false });
-          exerciseCache.set(exerciseName.toLowerCase(), exercise);
-          results.exercisesCreated++;
-        }
-
-        const se = await createSessionExercise(userId, {
-          id: crypto.randomUUID(),
-          sessionId: session.id,
-          exerciseId: exercise.id,
-          order: exerciseOrder++,
-        });
-
-        const type = inferExerciseType(exerciseRows);
-        let setOrder = 0;
-        for (const row of exerciseRows) {
-          const setData: Parameters<typeof createSet>[1] = {
-            id: crypto.randomUUID(),
-            sessionExerciseId: se.id,
-            isWarmup: false,
-            order: setOrder++,
-          };
-
-          if (type === 'weight_reps' || type === 'bodyweight_reps') {
-            if (!row.reps || row.reps <= 0) continue;
-            setData.reps = row.reps;
-            if (row.weight && !isNaN(row.weight) && row.weight > 0) setData.weight = row.weight;
-          } else if (type === 'duration') {
-            const secs = row.time ? parseTimeToSeconds(row.time) : 0;
-            if (secs <= 0) continue;
-            setData.duration = secs;
-          } else if (type === 'distance') {
-            if (!row.distance || isNaN(row.distance) || row.distance <= 0) continue;
-            setData.distance = toMeters(row.distance, row.distanceUnit ?? 'km');
-            if (row.time) {
-              const secs = parseTimeToSeconds(row.time);
-              if (secs > 0) setData.duration = secs;
-            }
-          }
-
-          await createSet(userId, setData);
-          results.setsCreated++;
-        }
+  // ── Phase 2: create missing exercises in one batch ──────────────────────────
+  const newExercises: { id: string; name: string; muscleGroupId: string; type: ExerciseType; isCustom: false }[] = [];
+  for (const exMap of sessionMap.values()) {
+    for (const [exerciseName, exerciseRows] of exMap) {
+      if (exerciseCache.has(exerciseName.toLowerCase())) continue;
+      const legacyKey = mapCategoryToMuscleGroup(exerciseRows[0].category);
+      if (!legacyKey) {
+        results.errors.push(`Could not map category "${exerciseRows[0].category}" for "${exerciseName}"`);
+        continue;
       }
-    } catch (error) {
-      results.errors.push(`Error processing date ${date}: ${error}`);
+      const muscleGroupId = mgByLegacyKey.get(legacyKey);
+      if (!muscleGroupId) {
+        results.errors.push(`Could not resolve muscle group for "${exerciseName}" (${exerciseRows[0].category})`);
+        continue;
+      }
+      const id = crypto.randomUUID();
+      const type = inferExerciseType(exerciseRows);
+      newExercises.push({ id, name: exerciseName, muscleGroupId, type, isCustom: false });
+      // Add to cache immediately so subsequent sessions find it
+      exerciseCache.set(exerciseName.toLowerCase(), { id, name: exerciseName, muscleGroupId, type, isCustom: false } as never);
     }
   }
+  if (newExercises.length > 0) {
+    await batchCreateExercises(userId, newExercises);
+    results.exercisesCreated = newExercises.length;
+  }
+
+  // ── Phase 3: build sessions, session exercises and sets in memory ────────────
+  type PendingSE = { id: string; sessionId: string; exerciseId: string; order: number };
+  type PendingSet = { id: string; sessionExerciseId: string; order: number; isWarmup: false; completedAt: Date; weight?: number; reps?: number; duration?: number; distance?: number };
+
+  const pendingSessions: { id: string; date: string }[] = [];
+  const pendingSEs: PendingSE[] = [];
+  const pendingSets: PendingSet[] = [];
+  const completedAt = new Date();
+
+  for (const [date, exMap] of sessionMap) {
+    const sessionId = crypto.randomUUID();
+    pendingSessions.push({ id: sessionId, date });
+
+    let exerciseOrder = 0;
+    for (const [exerciseName, exerciseRows] of exMap) {
+      const exercise = exerciseCache.get(exerciseName.toLowerCase());
+      if (!exercise) continue; // already logged above
+
+      const seId = crypto.randomUUID();
+      pendingSEs.push({ id: seId, sessionId, exerciseId: (exercise as { id: string }).id, order: exerciseOrder++ });
+
+      const type = inferExerciseType(exerciseRows);
+      let setOrder = 0;
+      for (const row of exerciseRows) {
+        const setBase = { id: crypto.randomUUID(), sessionExerciseId: seId, isWarmup: false as const, order: setOrder++, completedAt };
+
+        if (type === 'weight_reps' || type === 'bodyweight_reps') {
+          if (!row.reps || row.reps <= 0) continue;
+          pendingSets.push({ ...setBase, reps: row.reps, ...(row.weight && !isNaN(row.weight) && row.weight > 0 ? { weight: row.weight } : {}) });
+        } else if (type === 'duration') {
+          const secs = row.time ? parseTimeToSeconds(row.time) : 0;
+          if (secs <= 0) continue;
+          pendingSets.push({ ...setBase, duration: secs });
+        } else if (type === 'distance') {
+          if (!row.distance || isNaN(row.distance) || row.distance <= 0) continue;
+          const set: PendingSet = { ...setBase, distance: toMeters(row.distance, row.distanceUnit ?? 'km') };
+          if (row.time) { const secs = parseTimeToSeconds(row.time); if (secs > 0) set.duration = secs; }
+          pendingSets.push(set);
+        }
+      }
+    }
+  }
+
+  // ── Phase 4: flush to Supabase in three batch calls ─────────────────────────
+  await batchCreateSessions(userId, pendingSessions);
+  results.sessionsCreated = pendingSessions.length;
+
+  await batchCreateSessionExercises(userId, pendingSEs);
+
+  await batchCreateSets(userId, pendingSets);
+  results.setsCreated = pendingSets.length;
 
   return results;
 }
