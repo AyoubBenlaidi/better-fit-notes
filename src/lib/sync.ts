@@ -7,6 +7,8 @@ import { useAuthStore } from '@/stores/authStore';
 
 const SYNC_INTERVAL_MS = 30_000;
 const MAX_RETRIES = 5;
+const UPSERT_CHUNK_SIZE = 400;
+const PULL_PAGE_SIZE = 1000;
 
 let syncIntervalId: ReturnType<typeof setInterval> | null = null;
 let lastInitializedUserId: string | null = null; // prevent double initialSync
@@ -146,13 +148,21 @@ export async function initialSync(userId: string) {
   lastInitializedUserId = userId;
 
   console.log(`[Sync] 🔄 Initial sync for ${userId.slice(0, 8)}…`);
-  await pullFromSupabase(userId);
-  await pushAllLocalData(userId);
+  const pulledCount = await pullFromSupabase(userId);
+
+  // Only bulk-push if cloud was empty: this is a first-time login from a device
+  // that has local data (e.g. after CSV import before sign-up).
+  // When cloud already has data, it is the source of truth — subsequent changes
+  // flow through the sync queue, avoiding resurrection of cloud-deleted records.
+  if (pulledCount === 0) {
+    await pushAllLocalData(userId);
+  }
+
   console.log(`[Sync] ✅ Initial sync complete`);
 }
 
-export async function pullFromSupabase(userId: string) {
-  if (!isSupabaseConfigured || !supabase) return;
+export async function pullFromSupabase(userId: string): Promise<number> {
+  if (!isSupabaseConfigured || !supabase) return 0;
   console.log(`[Sync] 📥 Pulling for ${userId.slice(0, 8)}…`);
 
   const PULL_ORDER = [
@@ -166,25 +176,40 @@ export async function pullFromSupabase(userId: string) {
     'personalRecords',
   ] as const;
 
+  let totalPulled = 0;
+
   for (const table of PULL_ORDER) {
     try {
-      const { data, error } = await supabase
-        .from(mapTable(table))
-        .select('*')
-        .eq('user_id', userId);
-      if (error) throw error;
-      if (!data?.length) continue;
+      // PostgREST caps at 1000 rows by default — paginate to get everything
+      const allRows: Record<string, unknown>[] = [];
+      let offset = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from(mapTable(table))
+          .select('*')
+          .eq('user_id', userId)
+          .range(offset, offset + PULL_PAGE_SIZE - 1);
+        if (error) throw error;
+        if (!data?.length) break;
+        allRows.push(...data.map((r) => toCamelCase(r as Record<string, unknown>)));
+        if (data.length < PULL_PAGE_SIZE) break;
+        offset += PULL_PAGE_SIZE;
+      }
 
-      console.log(`[Sync]   ${table}: ${data.length} pulled`);
-      const rows = data.map((r) => toCamelCase(r as Record<string, unknown>));
+      if (allRows.length === 0) continue;
+
+      console.log(`[Sync]   ${table}: ${allRows.length} pulled`);
+      totalPulled += allRows.length;
       const dexieTable = db[table as keyof typeof db];
       if (dexieTable && typeof (dexieTable as { bulkPut?: unknown }).bulkPut === 'function') {
-        await (dexieTable as { bulkPut: (d: unknown[]) => Promise<unknown> }).bulkPut(rows);
+        await (dexieTable as { bulkPut: (d: unknown[]) => Promise<unknown> }).bulkPut(allRows);
       }
     } catch (err) {
       console.error(`[Sync] ❌ Pull failed for ${table}`, err);
     }
   }
+
+  return totalPulled;
 }
 
 /**
@@ -192,8 +217,6 @@ export async function pullFromSupabase(userId: string) {
  * Idempotent (uses onConflict: 'id') — safe to run on every login or after bulk import.
  * Order respects Supabase FK constraints.
  */
-const UPSERT_CHUNK_SIZE = 400;
-
 export async function pushAllLocalData(userId: string) {
   if (!supabase) return;
   console.log('[Sync] 📤 Pushing all local data…');
