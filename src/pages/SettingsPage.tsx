@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Sun, Moon, Monitor, Download, Upload, Trash2, Info, LogOut, User2 } from 'lucide-react';
-import { db } from '@/db/schema';
 import { Header } from '@/components/layout/Header';
 import { Button } from '@/components/ui/Button';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -9,38 +8,37 @@ import { toast } from '@/components/ui/Toast';
 import { useAuthStore } from '@/stores/authStore';
 import { signOut } from '@/domains/auth/hooks/useAuth';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import { clearSyncQueue, pushAllLocalData } from '@/lib/sync';
 import { clsx } from 'clsx';
 import { parseCSV, validateCSV, importCSVData } from '@/lib/csvParser';
+import { upsertSettings, getExercises, getSessions, getAllSessionExercises, getAllSets, getTemplates, getPersonalRecords, getMuscleGroups } from '@/lib/api';
 
 export function SettingsPage() {
   const { settings, updateSettings } = useSettingsStore();
   const { user } = useAuthStore();
+  const queryClient = useQueryClient();
   const [importingCSV, setImportingCSV] = useState(false);
 
-  const dbSettings = useLiveQuery(() => db.userSettings.get('user-settings'), []);
-  useEffect(() => {
-    if (dbSettings) updateSettings(dbSettings);
-  }, [dbSettings, updateSettings]);
+  const settingsMutation = useMutation({
+    mutationFn: (partial: Partial<typeof settings>) => upsertSettings(user!.id, partial),
+  });
 
   async function handleSettingChange<K extends keyof typeof settings>(key: K, value: typeof settings[K]) {
     updateSettings({ [key]: value });
-    await db.userSettings.update('user-settings', { [key]: value });
+    settingsMutation.mutate({ [key]: value });
   }
 
   async function handleExportJSON() {
     try {
-      const data = {
-        exercises: await db.exercises.toArray(),
-        sessions: await db.sessions.toArray(),
-        sessionExercises: await db.sessionExercises.toArray(),
-        sets: await db.sets.toArray(),
-        templates: await db.templates.toArray(),
-        templateExercises: await db.templateExercises.toArray(),
-        personalRecords: await db.personalRecords.toArray(),
-        muscleGroups: await db.muscleGroups.toArray(),
-      };
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const [exercises, sessions, allSEs, allSets, templates, personalRecords, muscleGroups] = await Promise.all([
+        getExercises(user!.id),
+        getSessions(user!.id),
+        getAllSessionExercises(user!.id),
+        getAllSets(user!.id),
+        getTemplates(user!.id),
+        getPersonalRecords(user!.id),
+        getMuscleGroups(user!.id),
+      ]);
+      const blob = new Blob([JSON.stringify({ exercises, sessions, sessionExercises: allSEs, sets: allSets, templates, personalRecords, muscleGroups }, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -55,15 +53,17 @@ export function SettingsPage() {
 
   async function handleExportCSV() {
     try {
-      const sessions = await db.sessions.toArray();
-      const sessionExercises = await db.sessionExercises.toArray();
-      const sets = await db.sets.toArray();
-      const exercises = await db.exercises.toArray();
+      const [sessions, allSEs, allSets, exercises] = await Promise.all([
+        getSessions(user!.id),
+        getAllSessionExercises(user!.id),
+        getAllSets(user!.id),
+        getExercises(user!.id),
+      ]);
       const exMap = new Map(exercises.map((e) => [e.id, e]));
-      const seMap = new Map(sessionExercises.map((se) => [se.id, se]));
+      const seMap = new Map(allSEs.map((se) => [se.id, se]));
       const sessionMap = new Map(sessions.map((s) => [s.id, s]));
       const rows = [['date', 'exercise', 'set', 'weight_kg', 'reps', 'duration_s', 'distance_m', 'rpe', 'warmup']];
-      for (const set of sets) {
+      for (const set of allSets) {
         const se = seMap.get(set.sessionExerciseId);
         if (!se) continue;
         const session = sessionMap.get(se.sessionId);
@@ -85,31 +85,6 @@ export function SettingsPage() {
     }
   }
 
-  async function handleImportJSON() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      try {
-        const text = await file.text();
-        const data = JSON.parse(text);
-        if (data.exercises) await db.exercises.bulkPut(data.exercises);
-        if (data.sessions) await db.sessions.bulkPut(data.sessions);
-        if (data.sessionExercises) await db.sessionExercises.bulkPut(data.sessionExercises);
-        if (data.sets) await db.sets.bulkPut(data.sets);
-        if (data.templates) await db.templates.bulkPut(data.templates);
-        if (data.templateExercises) await db.templateExercises.bulkPut(data.templateExercises);
-        if (data.personalRecords) await db.personalRecords.bulkPut(data.personalRecords);
-        toast('Data imported', 'success');
-      } catch {
-        toast('Import failed — invalid file', 'error');
-      }
-    };
-    input.click();
-  }
-
   async function handleImportCSV() {
     const input = document.createElement('input');
     input.type = 'file';
@@ -117,7 +92,6 @@ export function SettingsPage() {
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
-
       try {
         setImportingCSV(true);
         const text = await file.text();
@@ -128,40 +102,28 @@ export function SettingsPage() {
           return;
         }
 
-        // Validate CSV
-        const validation = await validateCSV(rows);
+        const validation = await validateCSV(rows, user!.id);
 
         if (validation.missingExercises.length > 0 || validation.unmappedCategories.size > 0) {
-          const missingText = validation.missingExercises.length > 0 
-            ? `${validation.missingExercises.length} exercises will be created as custom exercises.\n` 
-            : '';
-          const unmappedText = validation.unmappedCategories.size > 0 
-            ? `Category mapping not found for: ${Array.from(validation.unmappedCategories).join(', ')}\n` 
-            : '';
-
+          const missingText = validation.missingExercises.length > 0
+            ? `${validation.missingExercises.length} exercises will be created.\n` : '';
+          const unmappedText = validation.unmappedCategories.size > 0
+            ? `Category mapping not found for: ${Array.from(validation.unmappedCategories).join(', ')}\n` : '';
           const message = `Found ${validation.uniqueExercises.size} unique exercises from ${validation.totalRows} sets.\n${missingText}${unmappedText}Period: ${validation.dateRange.start} to ${validation.dateRange.end}\n\nContinue import?`;
-          
-          if (!confirm(message)) {
-            return;
-          }
+          if (!confirm(message)) return;
         }
 
-        // Import data
-        const result = await importCSVData(rows);
+        const result = await importCSVData(rows, user!.id);
 
-        // Push imported data to Supabase if the user is authenticated
-        if (user) {
-          pushAllLocalData(user.id).catch(console.error);
-        }
+        // Refresh all cached data
+        queryClient.invalidateQueries({ queryKey: ['sessions', user?.id] });
+        queryClient.invalidateQueries({ queryKey: ['allSessionExercises', user?.id] });
+        queryClient.invalidateQueries({ queryKey: ['allSets', user?.id] });
+        queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] });
 
         let message = `Imported ${result.sessionsCreated} sessions and ${result.setsCreated} sets`;
-        if (result.exercisesCreated > 0) {
-          message += ` (${result.exercisesCreated} new exercises created)`;
-        }
-        if (result.errors.length > 0) {
-          message += `\n⚠️ ${result.errors.length} errors occurred`;
-        }
-
+        if (result.exercisesCreated > 0) message += ` (${result.exercisesCreated} new exercises created)`;
+        if (result.errors.length > 0) message += `\n⚠️ ${result.errors.length} errors occurred`;
         toast(message, result.errors.length > 0 ? 'info' : 'success');
       } catch (error) {
         toast(`Import failed: ${error}`, 'error');
@@ -175,27 +137,19 @@ export function SettingsPage() {
   async function handleClearData() {
     if (!confirm('This will permanently delete ALL your workout data. Are you sure?')) return;
 
-    await Promise.all([
-      db.sessions.clear(), db.sessionExercises.clear(), db.sets.clear(),
-      db.templates.clear(), db.templateExercises.clear(), db.personalRecords.clear(),
-      clearSyncQueue(),
-    ]);
-
     if (isSupabaseConfigured && user) {
-      // Reverse FK order: children first, parents last
-      const tables = [
-        'personal_records',
-        'sets',
-        'template_exercises',
-        'session_exercises',
-        'sessions',
-        'templates',
-      ];
+      const tables = ['personal_records', 'sets', 'template_exercises', 'session_exercises', 'sessions', 'templates'];
       for (const table of tables) {
         const { error } = await supabase!.from(table).delete().eq('user_id', user.id);
         if (error) console.error(`[ClearData] Failed to delete ${table}`, error);
       }
     }
+
+    // Clear React Query cache for all data keys
+    queryClient.removeQueries({ queryKey: ['sessions'] });
+    queryClient.removeQueries({ queryKey: ['allSessionExercises'] });
+    queryClient.removeQueries({ queryKey: ['allSets'] });
+    queryClient.removeQueries({ queryKey: ['personalRecords'] });
 
     toast('All data cleared', 'success');
   }
@@ -211,7 +165,6 @@ export function SettingsPage() {
 
       <div className="flex flex-col gap-2 px-4 pt-4 pb-10">
 
-        {/* Units */}
         <Section title="Units">
           <SegmentControl
             label="Weight Unit"
@@ -235,7 +188,6 @@ export function SettingsPage() {
           />
         </Section>
 
-        {/* Appearance */}
         <Section title="Appearance">
           <div className="flex flex-col gap-2">
             <span className="text-xs font-semibold text-text-secondary">Theme</span>
@@ -263,41 +215,27 @@ export function SettingsPage() {
           </div>
         </Section>
 
-        {/* Data */}
         <Section title="Data">
           <div className="flex flex-col gap-2">
             <div className="grid grid-cols-2 gap-2">
               <Button variant="secondary" size="sm" onClick={handleExportJSON} className="rounded-xl h-11">
-                <Download size={14} />
-                Export JSON
+                <Download size={14} />Export JSON
               </Button>
               <Button variant="secondary" size="sm" onClick={handleExportCSV} className="rounded-xl h-11">
-                <Download size={14} />
-                Export CSV
+                <Download size={14} />Export CSV
               </Button>
             </div>
-            <Button variant="secondary" fullWidth onClick={handleImportJSON}>
-              <Upload size={15} />
-              Import JSON backup
-            </Button>
-            <Button 
-              variant="secondary" 
-              fullWidth 
-              onClick={handleImportCSV}
-              disabled={importingCSV}
-            >
+            <Button variant="secondary" fullWidth onClick={handleImportCSV} disabled={importingCSV}>
               <Upload size={15} />
               {importingCSV ? 'Importing FitNotes CSV...' : 'Import FitNotes CSV'}
             </Button>
             <div className="h-px bg-border/40" />
             <Button variant="danger" fullWidth onClick={handleClearData}>
-              <Trash2 size={15} />
-              Clear all data
+              <Trash2 size={15} />Clear all data
             </Button>
           </div>
         </Section>
 
-        {/* Account */}
         {isSupabaseConfigured && (
           <Section title="Account">
             {user ? (
@@ -312,8 +250,7 @@ export function SettingsPage() {
                   </div>
                 </div>
                 <Button variant="secondary" fullWidth onClick={handleSignOut}>
-                  <LogOut size={15} />
-                  Sign Out
+                  <LogOut size={15} />Sign Out
                 </Button>
               </div>
             ) : (
@@ -324,7 +261,6 @@ export function SettingsPage() {
           </Section>
         )}
 
-        {/* About */}
         <Section title="About">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-2xl bg-accent flex items-center justify-center flex-shrink-0 shadow-accent-glow">
@@ -332,7 +268,7 @@ export function SettingsPage() {
             </div>
             <div>
               <p className="text-sm font-semibold text-text-primary">Better Fit Notes</p>
-              <p className="text-xs text-text-secondary font-mono">v1.0.0 · Local-first</p>
+              <p className="text-xs text-text-secondary font-mono">v2.0.0 · Cloud-first</p>
             </div>
           </div>
         </Section>
@@ -344,9 +280,7 @@ export function SettingsPage() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-2">
-      <h2 className="text-[11px] font-bold text-text-muted uppercase tracking-widest px-1 pt-2">
-        {title}
-      </h2>
+      <h2 className="text-[11px] font-bold text-text-muted uppercase tracking-widest px-1 pt-2">{title}</h2>
       <div className="bg-surface-card rounded-2xl px-4 py-4 flex flex-col gap-4 border border-border/40 shadow-card">
         {children}
       </div>
@@ -354,17 +288,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function SegmentControl({
-  label,
-  options,
-  value,
-  onChange,
-}: {
-  label: string;
-  options: { value: string; label: string }[];
-  value: string;
-  onChange: (v: string) => void;
-}) {
+function SegmentControl({ label, options, value, onChange }: { label: string; options: { value: string; label: string }[]; value: string; onChange: (v: string) => void }) {
   return (
     <div className="flex items-center justify-between gap-4">
       <span className="text-sm text-text-primary font-medium flex-shrink-0">{label}</span>
@@ -375,9 +299,7 @@ function SegmentControl({
             onClick={() => onChange(opt.value)}
             className={clsx(
               'px-3 py-1.5 rounded-xl text-xs font-semibold transition-all duration-fast',
-              value === opt.value
-                ? 'bg-accent text-white shadow-sm'
-                : 'text-text-secondary active:bg-surface-overlay',
+              value === opt.value ? 'bg-accent text-white shadow-sm' : 'text-text-secondary active:bg-surface-overlay',
             )}
           >
             {opt.label}

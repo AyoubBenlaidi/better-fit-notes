@@ -1,21 +1,23 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Play, Trash2, LayoutTemplate } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod/v4';
-import { db } from '@/db/schema';
 import { Header } from '@/components/layout/Header';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonList } from '@/components/ui/Skeleton';
-import { enqueueSync } from '@/lib/sync';
+import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/components/ui/Toast';
 import { format } from 'date-fns';
+import {
+  getTemplates, createTemplate, deleteTemplate,
+  getTemplateExercises, createSession, createSessionExercise, createSet,
+} from '@/lib/api';
 
 const schema = z.object({
   name: z.string().min(1, 'Name is required').max(100),
@@ -25,27 +27,24 @@ type FormValues = z.infer<typeof schema>;
 
 export function TemplatesPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { user } = useAuthStore();
   const [createOpen, setCreateOpen] = useState(false);
 
-  const templates = useLiveQuery(() => db.templates.orderBy('name').toArray(), []);
+  const { data: templates, isLoading } = useQuery({
+    queryKey: ['templates', user?.id],
+    queryFn: () => getTemplates(user!.id),
+    enabled: !!user,
+  });
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
   });
 
-  const createTemplate = useMutation({
-    mutationFn: async (data: FormValues) => {
-      const template = {
-        id: crypto.randomUUID(),
-        ...data,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      await db.templates.add(template);
-      await enqueueSync('templates', 'create', template.id, template);
-      return template;
-    },
+  const createTemplateMutation = useMutation({
+    mutationFn: (data: FormValues) => createTemplate(user!.id, data),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['templates', user?.id] });
       setCreateOpen(false);
       reset();
       toast('Template created', 'success');
@@ -53,72 +52,45 @@ export function TemplatesPage() {
     onError: (err) => toast((err as Error).message, 'error'),
   });
 
-  const deleteTemplate = useMutation({
-    mutationFn: async (id: string) => {
-      await db.templateExercises.where('templateId').equals(id).delete();
-      await db.templates.delete(id);
-      await enqueueSync('templates', 'delete', id, { id });
+  const deleteTemplateMutation = useMutation({
+    mutationFn: (id: string) => deleteTemplate(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['templates', user?.id] });
+      toast('Template deleted', 'success');
     },
-    onSuccess: () => toast('Template deleted', 'success'),
     onError: (err) => toast((err as Error).message, 'error'),
   });
 
   const launchTemplate = useMutation({
     mutationFn: async (templateId: string) => {
       const today = format(new Date(), 'yyyy-MM-dd');
-      const session = {
-        id: crypto.randomUUID(),
-        date: today,
-        templateId,
-        startedAt: new Date(),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      await db.sessions.add(session);
+      const session = await createSession(user!.id, {
+        id: crypto.randomUUID(), date: today, templateId, startedAt: new Date(),
+      });
 
-      // Copy template exercises
-      const templateExercises = await db.templateExercises
-        .where('templateId')
-        .equals(templateId)
-        .sortBy('order');
+      const templateExercises = await getTemplateExercises(templateId);
 
       for (const te of templateExercises) {
-        const now = new Date();
-        const se = {
-          id: crypto.randomUUID(),
-          sessionId: session.id,
-          exerciseId: te.exerciseId,
-          order: te.order,
-          createdAt: now,
-          updatedAt: now,
-        };
-        await db.sessionExercises.add(se);
+        const se = await createSessionExercise(user!.id, {
+          id: crypto.randomUUID(), sessionId: session.id, exerciseId: te.exerciseId, order: te.order,
+        });
 
-        // Add default sets
         for (let i = 0; i < te.defaultSets; i++) {
-          await db.sets.add({
-            id: crypto.randomUUID(),
-            sessionExerciseId: se.id,
-            order: i + 1,
-            reps: te.defaultReps,
-            weight: te.defaultWeight,
-            isWarmup: false,
-            createdAt: now,
-            updatedAt: now,
+          await createSet(user!.id, {
+            id: crypto.randomUUID(), sessionExerciseId: se.id,
+            order: i + 1, reps: te.defaultReps, weight: te.defaultWeight, isWarmup: false,
           });
         }
       }
 
-      await enqueueSync('sessions', 'create', session.id, session);
       return session;
     },
     onSuccess: (session) => {
+      queryClient.invalidateQueries({ queryKey: ['sessions', user?.id] });
       navigate(`/session/${session.id}`);
     },
     onError: (err) => toast((err as Error).message, 'error'),
   });
-
-  const isLoading = templates === undefined;
 
   return (
     <div className="flex flex-col min-h-full bg-surface-base">
@@ -156,9 +128,8 @@ export function TemplatesPage() {
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => deleteTemplate.mutate(template.id)}
+                  variant="ghost" size="sm"
+                  onClick={() => deleteTemplateMutation.mutate(template.id)}
                   className="p-1 h-8 w-8 text-danger"
                 >
                   <Trash2 size={14} />
@@ -184,11 +155,11 @@ export function TemplatesPage() {
         footer={
           <div className="flex gap-3">
             <Button variant="secondary" fullWidth onClick={() => { setCreateOpen(false); reset(); }}>Cancel</Button>
-            <Button fullWidth loading={createTemplate.isPending} onClick={handleSubmit((d) => createTemplate.mutate(d))}>Create</Button>
+            <Button fullWidth loading={createTemplateMutation.isPending} onClick={handleSubmit((d) => createTemplateMutation.mutate(d))}>Create</Button>
           </div>
         }
       >
-        <form className="flex flex-col gap-4" onSubmit={handleSubmit((d) => createTemplate.mutate(d))}>
+        <form className="flex flex-col gap-4" onSubmit={handleSubmit((d) => createTemplateMutation.mutate(d))}>
           <Input label="Template Name" placeholder="e.g. Push Day A" error={errors.name?.message} {...register('name')} />
           <Input label="Description (optional)" placeholder="e.g. Chest + Shoulders + Triceps" {...register('description')} />
         </form>

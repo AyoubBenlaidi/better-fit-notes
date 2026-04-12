@@ -1,127 +1,117 @@
-import { useLiveQuery } from 'dexie-react-hooks';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { db } from '@/db/schema';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useAuthStore } from '@/stores/authStore';
 import type { Exercise, MuscleGroup } from '@/types/entities';
-import { enqueueSync } from '@/lib/sync';
+import {
+  getMuscleGroups, getExercises, createExercise, updateExercise,
+  deleteExercise, updateMuscleGroupColor,
+} from '@/lib/api';
 import { toast } from '@/components/ui/Toast';
 
 export function useMuscleGroups() {
-  return useLiveQuery(() => db.muscleGroups.orderBy('name').toArray(), []);
+  const { user } = useAuthStore();
+  const { data } = useQuery({
+    queryKey: ['muscleGroups', user?.id],
+    queryFn: () => getMuscleGroups(user!.id),
+    enabled: !!user,
+    staleTime: Infinity,
+  });
+  return data;
 }
 
 export function useExercises(filters?: { muscleGroupId?: string; search?: string }) {
-  return useLiveQuery(async () => {
-    let query = db.exercises.orderBy('name');
-    const results = await query.toArray();
+  const { user } = useAuthStore();
+  const { data } = useQuery({
+    queryKey: ['exercises', user?.id],
+    queryFn: () => getExercises(user!.id),
+    enabled: !!user,
+    staleTime: Infinity,
+  });
 
-    return results.filter((ex) => {
-      if (filters?.muscleGroupId && ex.muscleGroupId !== filters.muscleGroupId) return false;
-      if (filters?.search) {
-        const q = filters.search.toLowerCase();
-        if (!ex.name.toLowerCase().includes(q)) return false;
-      }
-      return true;
-    });
-  }, [filters?.muscleGroupId, filters?.search]);
+  if (!data) return undefined;
+
+  return data.filter((ex) => {
+    if (filters?.muscleGroupId && ex.muscleGroupId !== filters.muscleGroupId) return false;
+    if (filters?.search) {
+      const q = filters.search.toLowerCase();
+      if (!ex.name.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
 }
 
 export function useExercise(id: string) {
-  return useLiveQuery(() => db.exercises.get(id), [id]);
+  const { user } = useAuthStore();
+  const { data } = useQuery({
+    queryKey: ['exercises', user?.id],
+    queryFn: () => getExercises(user!.id),
+    enabled: !!user,
+    staleTime: Infinity,
+  });
+  return data?.find((ex) => ex.id === id);
 }
 
 export function useCreateExercise() {
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
 
   return useMutation({
-    mutationFn: async (
-      data: Omit<Exercise, 'id' | 'createdAt' | 'updatedAt' | 'isCustom'>
-    ) => {
-      const exercise: Exercise = {
-        ...data,
-        id: crypto.randomUUID(),
-        isCustom: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      await db.exercises.add(exercise);
-      await enqueueSync('exercises', 'create', exercise.id, exercise);
-      return exercise;
-    },
+    mutationFn: (data: Omit<Exercise, 'id' | 'createdAt' | 'updatedAt' | 'isCustom'>) =>
+      createExercise(user!.id, { ...data, isCustom: true }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['exercises'] });
+      queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] });
       toast('Exercise created', 'success');
     },
-    onError: (err) => {
-      toast((err as Error).message, 'error');
-    },
+    onError: (err) => toast((err as Error).message, 'error'),
   });
 }
 
 export function useUpdateExercise() {
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
 
   return useMutation({
-    mutationFn: async ({ id, ...data }: Partial<Exercise> & { id: string }) => {
-      const updated = { ...data, updatedAt: new Date() };
-      await db.exercises.update(id, updated);
-      const exercise = await db.exercises.get(id);
-      if (exercise) await enqueueSync('exercises', 'update', id, exercise);
-      return exercise;
-    },
+    mutationFn: ({ id, ...data }: Partial<Exercise> & { id: string }) =>
+      updateExercise(id, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['exercises'] });
+      queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] });
       toast('Exercise updated', 'success');
     },
-    onError: (err) => {
-      toast((err as Error).message, 'error');
-    },
+    onError: (err) => toast((err as Error).message, 'error'),
   });
 }
 
 export function useDeleteExercise() {
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
 
   return useMutation({
-    mutationFn: async (id: string) => {
-      // Check if used in any session
-      const usages = await db.sessionExercises.where('exerciseId').equals(id).count();
-      if (usages > 0) {
-        throw new Error('This exercise is used in past sessions and cannot be deleted.');
-      }
-      await db.exercises.delete(id);
-      await enqueueSync('exercises', 'delete', id, { id });
-    },
+    mutationFn: (id: string) => deleteExercise(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['exercises'] });
+      queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] });
       toast('Exercise deleted', 'success');
     },
-    onError: (err) => {
-      toast((err as Error).message, 'error');
-    },
+    onError: (err) => toast((err as Error).message, 'error'),
   });
 }
 
 export function useUpdateMuscleGroup() {
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
 
   return useMutation({
-    mutationFn: async ({ id, color }: { id: string; color: string }) => {
-      await db.muscleGroups.update(id, { color });
-      return { id, color };
-    },
+    mutationFn: ({ id, color }: { id: string; color: string }) =>
+      updateMuscleGroupColor(id, color),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['muscleGroups'] });
+      queryClient.invalidateQueries({ queryKey: ['muscleGroups', user?.id] });
       toast('Color updated', 'success');
     },
-    onError: (err) => {
-      toast((err as Error).message, 'error');
-    },
+    onError: (err) => toast((err as Error).message, 'error'),
   });
 }
 
 export function groupExercisesByMuscle(
   exercises: Exercise[],
-  muscleGroups: MuscleGroup[]
+  muscleGroups: MuscleGroup[],
 ): { group: MuscleGroup; exercises: Exercise[] }[] {
   const mgMap = new Map(muscleGroups.map((mg) => [mg.id, mg]));
   const grouped = new Map<string, Exercise[]>();

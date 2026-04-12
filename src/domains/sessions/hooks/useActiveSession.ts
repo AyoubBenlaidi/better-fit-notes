@@ -1,256 +1,188 @@
-import { useLiveQuery } from 'dexie-react-hooks';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { db } from '@/db/schema';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useAuthStore } from '@/stores/authStore';
 import type { WorkoutSet, SessionExercise } from '@/types/entities';
-import { enqueueSync } from '@/lib/sync';
+import {
+  getSession, getSessionExercises, getSetsForSessionExercise,
+  createSessionExercise, deleteSessionExercise,
+  createSet, updateSet, deleteSet,
+  updateSessionExercise, updateSession,
+  computeAndSavePersonalRecords,
+} from '@/lib/api';
 import { toast } from '@/components/ui/Toast';
 
 export function useActiveSession(sessionId: string) {
-  return useLiveQuery(() => db.sessions.get(sessionId), [sessionId]);
+  const { data } = useQuery({
+    queryKey: ['session', sessionId],
+    queryFn: () => getSession(sessionId),
+    enabled: !!sessionId,
+  });
+  return data;
 }
 
 export function useSessionExercises(sessionId: string) {
-  return useLiveQuery(
-    () => db.sessionExercises.where('sessionId').equals(sessionId).sortBy('order'),
-    [sessionId]
-  );
+  const { data } = useQuery({
+    queryKey: ['sessionExercises', sessionId],
+    queryFn: () => getSessionExercises(sessionId),
+    enabled: !!sessionId,
+  });
+  return data;
 }
 
 export function useSetsForSessionExercise(sessionExerciseId: string) {
-  return useLiveQuery(
-    () => db.sets.where('sessionExerciseId').equals(sessionExerciseId).sortBy('order'),
-    [sessionExerciseId]
-  );
+  const { data } = useQuery({
+    queryKey: ['sets', sessionExerciseId],
+    queryFn: () => getSetsForSessionExercise(sessionExerciseId),
+    enabled: !!sessionExerciseId,
+  });
+  return data;
 }
 
 export function useAddExerciseToSession() {
+  const queryClient = useQueryClient();
+  const { user } = useAuthStore();
+
   return useMutation({
-    mutationFn: async ({
-      sessionId,
-      exerciseId,
-      order,
-    }: {
-      sessionId: string;
-      exerciseId: string;
-      order: number;
-    }) => {
-      const now = new Date();
-      const se: SessionExercise = {
-        id: crypto.randomUUID(),
-        sessionId,
-        exerciseId,
-        order,
-        createdAt: now,
-        updatedAt: now,
-      };
-      await db.sessionExercises.add(se);
-      await enqueueSync('sessionExercises', 'create', se.id, se);
-
-      // Add one empty set
-      const set: WorkoutSet = {
-        id: crypto.randomUUID(),
-        sessionExerciseId: se.id,
-        order: 1,
-        isWarmup: false,
-        createdAt: now,
-        updatedAt: now,
-      };
-      await db.sets.add(set);
-      await enqueueSync('sets', 'create', set.id, set);
-
+    mutationFn: async ({ sessionId, exerciseId, order }: { sessionId: string; exerciseId: string; order: number }) => {
+      const se = await createSessionExercise(user!.id, {
+        id: crypto.randomUUID(), sessionId, exerciseId, order,
+      });
+      await createSet(user!.id, {
+        id: crypto.randomUUID(), sessionExerciseId: se.id,
+        order: 1, isWarmup: false,
+      });
       return se;
+    },
+    onSuccess: (se) => {
+      // ['sessionExercises', sessionId] is also used by CalendarPage — both get fresh data
+      queryClient.invalidateQueries({ queryKey: ['sessionExercises', se.sessionId] });
+      queryClient.invalidateQueries({ queryKey: ['sets', se.id] });
     },
   });
 }
 
 export function useRemoveExerciseFromSession() {
+  const queryClient = useQueryClient();
+
   return useMutation({
     mutationFn: async (sessionExerciseId: string) => {
-      await db.sets.where('sessionExerciseId').equals(sessionExerciseId).delete();
-      await db.sessionExercises.delete(sessionExerciseId);
-      await enqueueSync('sessionExercises', 'delete', sessionExerciseId, { id: sessionExerciseId });
+      let sessionId: string | undefined;
+      for (const [, data] of queryClient.getQueriesData<SessionExercise[]>({ queryKey: ['sessionExercises'] })) {
+        if (Array.isArray(data)) {
+          const found = data.find((se) => se.id === sessionExerciseId);
+          if (found) { sessionId = found.sessionId; break; }
+        }
+      }
+      await deleteSessionExercise(sessionExerciseId);
+      return { sessionExerciseId, sessionId };
+    },
+    onSuccess: ({ sessionExerciseId, sessionId }) => {
+      queryClient.removeQueries({ queryKey: ['sets', sessionExerciseId] });
+      if (sessionId) queryClient.invalidateQueries({ queryKey: ['sessionExercises', sessionId] });
     },
   });
 }
 
 export function useAddSet() {
+  const queryClient = useQueryClient();
+  const { user } = useAuthStore();
+
   return useMutation({
-    mutationFn: async ({
-      sessionExerciseId,
-      fromSet,
-      order,
-    }: {
-      sessionExerciseId: string;
-      fromSet?: WorkoutSet;
-      order: number;
-    }) => {
-      const now = new Date();
-      const set: WorkoutSet = {
-        id: crypto.randomUUID(),
-        sessionExerciseId,
-        order,
-        weight: fromSet?.weight,
-        reps: fromSet?.reps,
-        isWarmup: false,
-        createdAt: now,
-        updatedAt: now,
-      };
-      await db.sets.add(set);
-      await enqueueSync('sets', 'create', set.id, set);
-      return set;
+    mutationFn: ({ sessionExerciseId, fromSet, order }: { sessionExerciseId: string; fromSet?: WorkoutSet; order: number }) =>
+      createSet(user!.id, {
+        id: crypto.randomUUID(), sessionExerciseId,
+        order, weight: fromSet?.weight, reps: fromSet?.reps, isWarmup: false,
+      }),
+    onSuccess: (set) => {
+      queryClient.invalidateQueries({ queryKey: ['sets', set.sessionExerciseId] });
     },
   });
 }
 
 export function useUpdateSet() {
+  const queryClient = useQueryClient();
+
   return useMutation({
-    mutationFn: async ({ id, ...data }: Partial<WorkoutSet> & { id: string }) => {
-      await db.sets.update(id, { ...data, updatedAt: new Date() });
-      const set = await db.sets.get(id);
-      if (set) await enqueueSync('sets', 'update', id, set);
-      return set;
+    mutationFn: ({ id, ...data }: Partial<WorkoutSet> & { id: string }) =>
+      updateSet(id, data),
+    onSuccess: (set) => {
+      queryClient.invalidateQueries({ queryKey: ['sets', set.sessionExerciseId] });
     },
   });
 }
 
 export function useDeleteSet() {
+  const queryClient = useQueryClient();
+
   return useMutation({
     mutationFn: async (id: string) => {
-      await db.sets.delete(id);
-      await enqueueSync('sets', 'delete', id, { id });
+      // Find the set in cache to know its sessionExerciseId
+      let sessionExerciseId: string | undefined;
+      for (const [, data] of queryClient.getQueriesData<WorkoutSet[]>({ queryKey: ['sets'] })) {
+        if (Array.isArray(data)) {
+          const found = data.find((s) => s.id === id);
+          if (found) { sessionExerciseId = found.sessionExerciseId; break; }
+        }
+      }
+      await deleteSet(id);
+      return sessionExerciseId;
+    },
+    onSuccess: (sessionExerciseId) => {
+      if (sessionExerciseId) queryClient.invalidateQueries({ queryKey: ['sets', sessionExerciseId] });
     },
   });
 }
 
 export function useReorderSessionExercises() {
+  const queryClient = useQueryClient();
+
   return useMutation({
-    mutationFn: async ({
-      sourceId,
-      targetId,
-    }: {
-      sourceId: string;
-      targetId: string;
-    }) => {
-      const source = await db.sessionExercises.get(sourceId);
-      const target = await db.sessionExercises.get(targetId);
+    mutationFn: async ({ sourceId, targetId }: { sourceId: string; targetId: string }) => {
+      // Find both in cache
+      let sessionId: string | undefined;
+      let sourceOrder: number | undefined;
+      let targetOrder: number | undefined;
 
-      if (!source || !target) return;
+      for (const [, data] of queryClient.getQueriesData<SessionExercise[]>({ queryKey: ['sessionExercises'] })) {
+        if (!Array.isArray(data)) continue;
+        const source = data.find((se) => se.id === sourceId);
+        const target = data.find((se) => se.id === targetId);
+        if (source && target) {
+          sessionId = source.sessionId;
+          sourceOrder = source.order;
+          targetOrder = target.order;
+          break;
+        }
+      }
 
-      // Swap orders
-      const sourceOrder = source.order;
-      const targetOrder = target.order;
+      if (sourceOrder === undefined || targetOrder === undefined) return;
 
-      await db.sessionExercises.update(sourceId, { order: targetOrder });
-      await db.sessionExercises.update(targetId, { order: sourceOrder });
-
-      // Sync
-      const updatedSource = await db.sessionExercises.get(sourceId);
-      const updatedTarget = await db.sessionExercises.get(targetId);
-      if (updatedSource) await enqueueSync('sessionExercises', 'update', sourceId, updatedSource);
-      if (updatedTarget) await enqueueSync('sessionExercises', 'update', targetId, updatedTarget);
+      await Promise.all([
+        updateSessionExercise(sourceId, { order: targetOrder }),
+        updateSessionExercise(targetId, { order: sourceOrder }),
+      ]);
+      return sessionId;
+    },
+    onSuccess: (sessionId) => {
+      if (sessionId) queryClient.invalidateQueries({ queryKey: ['sessionExercises', sessionId] });
     },
   });
 }
 
 export function useFinishSession() {
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
 
   return useMutation({
     mutationFn: async (sessionId: string) => {
       const now = new Date();
-      await db.sessions.update(sessionId, {
-        finishedAt: now,
-        updatedAt: now,
-      });
-
-      // Compute personal records
-      await computePersonalRecords(sessionId);
-
-      const session = await db.sessions.get(sessionId);
-      if (session) await enqueueSync('sessions', 'update', sessionId, session);
+      await updateSession(sessionId, { finishedAt: now });
+      await computeAndSavePersonalRecords(user!.id, sessionId);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      queryClient.invalidateQueries({ queryKey: ['sessions', user?.id] });
+      queryClient.invalidateQueries({ queryKey: ['personalRecords', user?.id] });
       toast('Workout saved!', 'success');
     },
-    onError: (err) => {
-      toast((err as Error).message, 'error');
-    },
+    onError: (err) => toast((err as Error).message, 'error'),
   });
-}
-
-async function computePersonalRecords(sessionId: string) {
-  const session = await db.sessions.get(sessionId);
-  if (!session) return;
-
-  const sessionExercises = await db.sessionExercises
-    .where('sessionId')
-    .equals(sessionId)
-    .toArray();
-
-  for (const se of sessionExercises) {
-    const sets = await db.sets
-      .where('sessionExerciseId')
-      .equals(se.id)
-      .toArray();
-
-    const completedSets = sets.filter((s) => s.completedAt);
-    if (completedSets.length === 0) continue;
-
-    const exercise = await db.exercises.get(se.exerciseId);
-    if (!exercise) continue;
-
-    // Max weight
-    const weights = completedSets.map((s) => s.weight ?? 0).filter((w) => w > 0);
-    if (weights.length > 0) {
-      const maxWeight = Math.max(...weights);
-      await upsertPR(se.exerciseId, 'max_weight', maxWeight, sessionId, session.date);
-    }
-
-    // Max reps in a single set
-    const reps = completedSets.map((s) => s.reps ?? 0).filter((r) => r > 0);
-    if (reps.length > 0) {
-      const maxReps = Math.max(...reps);
-      await upsertPR(se.exerciseId, 'max_reps', maxReps, sessionId, session.date);
-    }
-
-    // Total volume (weight × reps summed)
-    const volume = completedSets.reduce((acc, s) => acc + (s.weight ?? 0) * (s.reps ?? 0), 0);
-    if (volume > 0) {
-      await upsertPR(se.exerciseId, 'max_volume', volume, sessionId, session.date);
-    }
-  }
-}
-
-async function upsertPR(
-  exerciseId: string,
-  type: 'max_weight' | 'max_reps' | 'max_volume' | 'max_distance' | 'max_duration',
-  value: number,
-  sessionId: string,
-  date: string
-) {
-  const existing = await db.personalRecords
-    .where('[exerciseId+type]')
-    .equals([exerciseId, type])
-    .first();
-
-  if (!existing || value > existing.value) {
-    const pr = {
-      id: existing?.id ?? crypto.randomUUID(),
-      exerciseId,
-      type,
-      value,
-      sessionId,
-      date,
-      createdAt: new Date(),
-    };
-    if (existing) {
-      await db.personalRecords.update(existing.id, pr);
-    } else {
-      await db.personalRecords.add(pr);
-    }
-
-    // Haptic for PR!
-    if (navigator.vibrate) navigator.vibrate([10, 50, 10]);
-  }
 }

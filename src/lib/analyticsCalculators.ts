@@ -63,29 +63,23 @@ export function calculatePeriodVolume(
   const startStr = format(config.startDate, 'yyyy-MM-dd');
   const endStr = format(config.endDate, 'yyyy-MM-dd');
 
-  // Filter sessions in range
-  const inPeriod = sessions.filter((s) => s.date >= startStr && s.date <= endStr);
-  const sessionIds = new Set(inPeriod.map((s) => s.id));
+  const sessionIds = new Set(
+    sessions.filter((s) => s.date >= startStr && s.date <= endStr).map((s) => s.id),
+  );
 
-  // Filter session exercises in range
-  const exercisesByType = new Map<string, string>(exercises.map((e) => [e.id, e.type]));
-  const sesIds = sessionExercises
-    .filter((se) => sessionIds.has(se.sessionId))
-    .map((se) => se.id);
-  const sessionExerciseIds = new Set(sesIds);
+  const exercisesByType = new Map(exercises.map((e) => [e.id, e.type]));
+  const seMap = new Map(sessionExercises.map((se) => [se.id, se]));
+  const sessionExerciseIds = new Set(
+    sessionExercises.filter((se) => sessionIds.has(se.sessionId)).map((se) => se.id),
+  );
 
-  // Calculate volume for completed weight_reps sets only
   let total = 0;
   for (const set of sets) {
     if (!sessionExerciseIds.has(set.sessionExerciseId)) continue;
-    if (!set.completedAt) continue; // Only completed sets
-
-    // Find associated exercise to check type
-    const se = sessionExercises.find((se) => se.id === set.sessionExerciseId);
+    if (!set.completedAt) continue;
+    const se = seMap.get(set.sessionExerciseId);
     if (!se) continue;
-    const exerciseType = exercisesByType.get(se.exerciseId);
-    if (exerciseType !== 'weight_reps') continue;
-
+    if (exercisesByType.get(se.exerciseId) !== 'weight_reps') continue;
     total += (set.weight ?? 0) * (set.reps ?? 0);
   }
 
@@ -110,34 +104,28 @@ export function getWeeklyBreakdown(
     end: config.endDate,
   }, { weekStartsOn: 1 });
 
-  const exercisesByType = new Map<string, string>(exercises.map((e) => [e.id, e.type]));
+  const exercisesByType = new Map(exercises.map((e) => [e.id, e.type]));
+  // Build once outside the per-week loop
+  const seMap = new Map(sessionExercises.map((se) => [se.id, se]));
 
   return weeks.map((weekStart) => {
     const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
     const ws = format(weekStart, 'yyyy-MM-dd');
     const we = format(weekEnd, 'yyyy-MM-dd');
 
-    // Filter sessions in this week
     const weekSessions = sessions.filter((s) => s.date >= ws && s.date <= we);
     const weekSessionIds = new Set(weekSessions.map((s) => s.id));
+    const weekSEIds = new Set(
+      sessionExercises.filter((se) => weekSessionIds.has(se.sessionId)).map((se) => se.id),
+    );
 
-    // Filter session exercises in this week
-    const sesIds = sessionExercises
-      .filter((se) => weekSessionIds.has(se.sessionId))
-      .map((se) => se.id);
-    const weekSEIds = new Set(sesIds);
-
-    // Calculate volume
     let volume = 0;
     for (const set of sets) {
       if (!weekSEIds.has(set.sessionExerciseId)) continue;
       if (!set.completedAt) continue;
-
-      const se = sessionExercises.find((se) => se.id === set.sessionExerciseId);
+      const se = seMap.get(set.sessionExerciseId);
       if (!se) continue;
-      const exerciseType = exercisesByType.get(se.exerciseId);
-      if (exerciseType !== 'weight_reps') continue;
-
+      if (exercisesByType.get(se.exerciseId) !== 'weight_reps') continue;
       volume += (set.weight ?? 0) * (set.reps ?? 0);
     }
 
@@ -168,12 +156,12 @@ export function getMuscleDistribution(
   const inPeriod = sessions.filter((s) => s.date >= startStr && s.date <= endStr);
   const sessionIds = new Set(inPeriod.map((s) => s.id));
 
-  // Count by muscle group
+  const exerciseMap = new Map(exercises.map((e) => [e.id, e]));
   const counts = new Map<string, number>();
 
   for (const se of sessionExercises) {
     if (!sessionIds.has(se.sessionId)) continue;
-    const ex = exercises.find((e) => e.id === se.exerciseId);
+    const ex = exerciseMap.get(se.exerciseId);
     if (!ex) continue;
     
     const mgId = ex.muscleGroupId ?? '';

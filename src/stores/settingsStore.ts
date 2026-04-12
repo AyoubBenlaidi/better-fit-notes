@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 import type { UserSettings } from '@/types/entities';
 
 interface SettingsState {
@@ -15,16 +14,11 @@ const defaultSettings: UserSettings = {
   firstDayOfWeek: 1,
 };
 
-export const useSettingsStore = create<SettingsState>()(
-  persist(
-    (set) => ({
-      settings: defaultSettings,
-      updateSettings: (partial) =>
-        set((state) => ({ settings: { ...state.settings, ...partial } })),
-    }),
-    { name: 'bfn-settings' }
-  )
-);
+export const useSettingsStore = create<SettingsState>((set) => ({
+  settings: defaultSettings,
+  updateSettings: (partial) =>
+    set((state) => ({ settings: { ...state.settings, ...partial } })),
+}));
 
 export function convertWeight(value: number, from: 'kg' | 'lbs', to: 'kg' | 'lbs'): number {
   if (from === to) return value;

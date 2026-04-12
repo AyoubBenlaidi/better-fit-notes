@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Plus, ArrowLeft, Dumbbell } from 'lucide-react';
 import { format } from 'date-fns';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useQuery, useQueries } from '@tanstack/react-query';
 import { ExerciseBlock } from '@/domains/sessions/components/ExerciseBlock';
 import { AddExerciseSheet } from '@/domains/sessions/components/AddExerciseSheet';
 import {
@@ -12,15 +12,16 @@ import {
   useReorderSessionExercises,
 } from '@/domains/sessions/hooks/useActiveSession';
 import { useTouchDragDrop } from '@/domains/sessions/hooks/useTouchDragDrop';
+import { useAuthStore } from '@/stores/authStore';
 import type { Exercise } from '@/types/entities';
 import { clsx } from 'clsx';
-import { db } from '@/db/schema';
-import { useMemo } from 'react';
+import { getExercises, getMuscleGroups, getSetsForSessionExercise } from '@/lib/api';
 import { calculateTotalVolume } from '@/lib/volumeCalculator';
 
 export function SessionPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuthStore();
   const [addExerciseOpen, setAddExerciseOpen] = useState(false);
   const [draggedExerciseId, setDraggedExerciseId] = useState<string | null>(null);
   const [dragOverExerciseId, setDragOverExerciseId] = useState<string | null>(null);
@@ -29,9 +30,54 @@ export function SessionPage() {
   const sessionExercises = useSessionExercises(id!);
   const addExercise = useAddExerciseToSession();
   const reorder = useReorderSessionExercises();
-  const touchDragDrop = useTouchDragDrop((sourceId, targetId) => {
-    reorder.mutate({ sourceId, targetId });
+  const touchDragDrop = useTouchDragDrop((sourceId, targetId) => reorder.mutate({ sourceId, targetId }));
+
+  const { data: exercises } = useQuery({
+    queryKey: ['exercises', user?.id],
+    queryFn: () => getExercises(user!.id),
+    enabled: !!user,
+    staleTime: Infinity,
   });
+
+  const { data: muscleGroups } = useQuery({
+    queryKey: ['muscleGroups', user?.id],
+    queryFn: () => getMuscleGroups(user!.id),
+    enabled: !!user,
+    staleTime: Infinity,
+  });
+
+  const exerciseMap = useMemo(
+    () => new Map(exercises?.map((e) => [e.id, e]) ?? []),
+    [exercises],
+  );
+  const mgMap = useMemo(
+    () => new Map(muscleGroups?.map((mg) => [mg.id, mg]) ?? []),
+    [muscleGroups],
+  );
+
+  // Use the same ['sets', seId] keys as ExerciseBlock — cache is shared, invalidations propagate automatically
+  const setQueries = useQueries({
+    queries: (sessionExercises ?? []).map((se) => ({
+      queryKey: ['sets', se.id],
+      queryFn: () => getSetsForSessionExercise(se.id),
+    })),
+  });
+
+  const totalSetsCount = useMemo(
+    () => setQueries.reduce((n, q) => n + (q.data?.length ?? 0), 0),
+    [setQueries],
+  );
+
+  const totalVolume = useMemo(() => {
+    if (!sessionExercises) return 0;
+    let total = 0;
+    for (let i = 0; i < sessionExercises.length; i++) {
+      const ex = exerciseMap.get(sessionExercises[i].exerciseId);
+      if (ex?.type !== 'weight_reps') continue;
+      total += calculateTotalVolume(setQueries[i]?.data ?? [], ex.type);
+    }
+    return total;
+  }, [sessionExercises, setQueries, exerciseMap]);
 
   async function handleAddExercise(exercise: Exercise) {
     if (!id) return;
@@ -55,47 +101,6 @@ export function SessionPage() {
 
   const existingExerciseIds = sessionExercises?.map((se) => se.exerciseId) ?? [];
 
-  const sessionExerciseIds = useMemo(
-    () => sessionExercises?.map((se) => se.id) ?? [],
-    [sessionExercises],
-  );
-
-  const allSessionSets = useLiveQuery(
-    async () => {
-      if (sessionExerciseIds.length === 0) return [];
-      return db.sets.where('sessionExerciseId').anyOf(sessionExerciseIds).toArray();
-    },
-    [sessionExerciseIds.join(',')],
-  );
-
-  const sessionExercisesWithData = useLiveQuery(
-    async () => {
-      if (!sessionExercises) return [];
-      const exerciseIds = sessionExercises.map((se) => se.exerciseId);
-      if (exerciseIds.length === 0) return [];
-      const exercises = await db.exercises.where('id').anyOf(exerciseIds).toArray();
-      const exerciseMap = new Map(exercises.map((e) => [e.id, e]));
-      return sessionExercises.map((se) => ({ ...se, exercise: exerciseMap.get(se.exerciseId) }));
-    },
-    [sessionExercises?.map((se) => se.id).join(',')],
-  );
-
-  const totalVolume = useMemo(() => {
-    let total = 0;
-    if (!sessionExercisesWithData || !allSessionSets) return total;
-    for (const se of sessionExercisesWithData) {
-      if (se.exercise?.type !== 'weight_reps') continue;
-      const setsForExercise = allSessionSets.filter((s) => s.sessionExerciseId === se.id);
-      total += calculateTotalVolume(setsForExercise, se.exercise.type);
-    }
-    return total;
-  }, [sessionExercisesWithData, allSessionSets]);
-
-  const totalSetsCount = useMemo(
-    () => allSessionSets?.length ?? 0,
-    [allSessionSets],
-  );
-
   if (!session) {
     return (
       <div className="flex items-center justify-center min-h-dvh bg-surface-base">
@@ -109,8 +114,6 @@ export function SessionPage() {
 
   return (
     <div className="h-dvh flex flex-col bg-surface-base overflow-hidden">
-
-      {/* ── Header ───────────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-30 bg-nav border-b border-border safe-top flex-shrink-0">
         <div className="flex items-center gap-3 px-3 h-14">
           <button
@@ -133,12 +136,9 @@ export function SessionPage() {
             )}
           </div>
 
-          {/* Stats pills */}
           <div className="flex items-center gap-1.5 flex-shrink-0">
             {totalSetsCount > 0 && (
-              <span className="primary-pill">
-                {totalSetsCount} sets
-              </span>
+              <span className="primary-pill">{totalSetsCount} sets</span>
             )}
             {totalVolume > 0 && (
               <span className="primary-pill">
@@ -149,7 +149,6 @@ export function SessionPage() {
         </div>
       </header>
 
-      {/* ── Exercise blocks ───────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto py-2">
         {(sessionExercises?.length ?? 0) === 0 && (
           <div className="flex flex-col items-center gap-4 py-20 px-8 text-center">
@@ -165,32 +164,36 @@ export function SessionPage() {
           </div>
         )}
 
-        {sessionExercises?.map((se) => (
-          <ExerciseBlock
-            key={se.id}
-            sessionExercise={se}
-            onDragStart={(eid, e) => {
-              setDraggedExerciseId(eid);
-              e.dataTransfer.effectAllowed = 'move';
-              e.dataTransfer.setData('text/plain', eid);
-            }}
-            onDragOver={(e) => { e.preventDefault(); setDragOverExerciseId(se.id); }}
-            onDragLeave={() => setDragOverExerciseId(null)}
-            onDrop={(eid, e) => { e.preventDefault(); e.stopPropagation(); handleExerciseDrop(eid); }}
-            isDragOver={dragOverExerciseId === se.id}
-            onGripTouchStart={(eid, e) => touchDragDrop.handleGripTouchStart(e, eid)}
-            isTouchDraggedOver={
-              touchDragDrop.state.draggedId !== null &&
-              touchDragDrop.state.dragOverId === se.id
-            }
-          />
-        ))}
+        {sessionExercises?.map((se) => {
+          const exercise = exerciseMap.get(se.exerciseId);
+          if (!exercise) return null;
+          return (
+            <ExerciseBlock
+              key={se.id}
+              sessionExercise={se}
+              exercise={exercise}
+              muscleGroup={mgMap.get(exercise.muscleGroupId)}
+              onDragStart={(eid, e) => {
+                setDraggedExerciseId(eid);
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', eid);
+              }}
+              onDragOver={(e) => { e.preventDefault(); setDragOverExerciseId(se.id); }}
+              onDragLeave={() => setDragOverExerciseId(null)}
+              onDrop={(eid, e) => { e.preventDefault(); e.stopPropagation(); handleExerciseDrop(eid); }}
+              isDragOver={dragOverExerciseId === se.id}
+              onGripTouchStart={(eid, e) => touchDragDrop.handleGripTouchStart(e, eid)}
+              isTouchDraggedOver={
+                touchDragDrop.state.draggedId !== null &&
+                touchDragDrop.state.dragOverId === se.id
+              }
+            />
+          );
+        })}
 
-        {/* Bottom spacing for FAB */}
         <div className="h-4" />
       </div>
 
-      {/* ── Add exercise FAB ──────────────────────────────────────────────── */}
       <div className="sticky bottom-0 pb-safe pt-2 px-4 bg-fade-up">
         <button
           onClick={() => setAddExerciseOpen(true)}

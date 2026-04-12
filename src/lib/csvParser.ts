@@ -1,5 +1,5 @@
-import type { Exercise, ExerciseType, Session, WorkoutSet, SessionExercise } from '@/types/entities';
-import { db, MUSCLE_GROUP_NAMES } from '@/db/schema';
+import type { ExerciseType } from '@/types/entities';
+import { MUSCLE_GROUP_NAMES, getExercises, getMuscleGroups, createExercise, createSession, createSessionExercise, createSet } from '@/lib/api';
 
 export interface CSVRow {
   date: string;
@@ -105,16 +105,6 @@ export function mapCategoryToMuscleGroup(category: string): string | null {
   return null;
 }
 
-// After v2 migration the mg-xxx IDs are replaced with UUIDs — resolve via name
-async function resolveMuscleGroupUUID(legacyKey: string): Promise<string | null> {
-  const direct = await db.muscleGroups.get(legacyKey);
-  if (direct) return direct.id;
-  const name = MUSCLE_GROUP_NAMES[legacyKey];
-  if (!name) return null;
-  const mg = await db.muscleGroups.where('name').equals(name).first();
-  return mg?.id ?? null;
-}
-
 function inferExerciseType(rows: CSVRow[]): ExerciseType {
   const first = rows[0];
   if (first.distance && !isNaN(first.distance) && first.distance > 0) return 'distance';
@@ -133,47 +123,64 @@ function parseTimeToSeconds(time: string): number {
 function toMeters(distance: number, unit: string): number {
   const u = unit.toLowerCase();
   if (u === 'miles') return Math.round(distance * 1609.34);
-  if (u === 'm')     return Math.round(distance); // already meters (e.g. Rowing Machine)
+  if (u === 'm')     return Math.round(distance);
   return Math.round(distance * 1000); // km → meters
 }
 
-export async function exerciseExists(name: string): Promise<boolean> {
-  const exercise = await db.exercises.where('name').equalsIgnoreCase(name).first();
-  return !!exercise;
-}
-
-export async function getOrCreateExercise(
-  name: string,
-  legacyKey: string,
-  type: ExerciseType,
-): Promise<{ exercise: Exercise; created: boolean } | null> {
-  const existing = await db.exercises.where('name').equalsIgnoreCase(name).first();
-  if (existing) return { exercise: existing, created: false };
-
-  const muscleGroupId = await resolveMuscleGroupUUID(legacyKey);
-  if (!muscleGroupId) return null;
-
-  const exercise: Exercise = {
-    id: crypto.randomUUID(),
-    name,
-    muscleGroupId,
-    type,
-    isCustom: false,
-    createdAt: new Date(),
-    updatedAt: new Date(),
+export async function validateCSV(rows: CSVRow[], userId: string) {
+  const summary = {
+    totalRows: rows.length,
+    uniqueExercises: new Set<string>(),
+    missingExercises: [] as string[],
+    unmappedCategories: new Set<string>(),
+    dateRange: { start: '', end: '' },
   };
 
-  await db.exercises.add(exercise);
-  return { exercise, created: true };
+  const exercises = await getExercises(userId);
+  const existingNames = new Set(exercises.map((e) => e.name.toLowerCase()));
+  const uniqueExercises = extractUniqueExercises(rows);
+
+  for (const [exerciseName, category] of uniqueExercises) {
+    summary.uniqueExercises.add(exerciseName);
+
+    const muscleGroupId = mapCategoryToMuscleGroup(category);
+    if (!muscleGroupId) summary.unmappedCategories.add(category);
+
+    if (!existingNames.has(exerciseName)) summary.missingExercises.push(exerciseName);
+  }
+
+  const dates = rows.map((r) => r.date).filter(Boolean).sort();
+  if (dates.length > 0) {
+    summary.dateRange.start = dates[0];
+    summary.dateRange.end = dates[dates.length - 1];
+  }
+
+  return summary;
 }
 
-export async function importCSVData(rows: CSVRow[]) {
+export async function importCSVData(rows: CSVRow[], userId: string) {
   const results = {
     sessionsCreated: 0,
     setsCreated: 0,
     exercisesCreated: 0,
     errors: [] as string[],
   };
+
+  const [existingExercises, muscleGroups] = await Promise.all([
+    getExercises(userId),
+    getMuscleGroups(userId),
+  ]);
+
+  // Mutable cache so newly created exercises are found in subsequent iterations
+  const exerciseCache = new Map(existingExercises.map((e) => [e.name.toLowerCase(), e]));
+  const mgByLegacyKey = new Map(
+    muscleGroups
+      .map((mg) => {
+        const legacyKey = Object.entries(MUSCLE_GROUP_NAMES).find(([, name]) => name === mg.name)?.[0];
+        return legacyKey ? [legacyKey, mg.id] as const : null;
+      })
+      .filter((entry): entry is [string, string] => entry !== null),
+  );
 
   // Group rows by date → exercise
   const sessionMap = new Map<string, Map<string, CSVRow[]>>();
@@ -183,7 +190,6 @@ export async function importCSVData(rows: CSVRow[]) {
       results.errors.push(`Invalid row: missing date, exercise, or category`);
       continue;
     }
-
     if (!sessionMap.has(row.date)) sessionMap.set(row.date, new Map());
     const sessionExercises = sessionMap.get(row.date)!;
     if (!sessionExercises.has(row.exercise)) sessionExercises.set(row.exercise, []);
@@ -192,15 +198,7 @@ export async function importCSVData(rows: CSVRow[]) {
 
   for (const [date, exercises] of sessionMap) {
     try {
-      const session: Session = {
-        id: crypto.randomUUID(),
-        date,
-        notes: '',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      await db.sessions.add(session);
+      const session = await createSession(userId, { id: crypto.randomUUID(), date });
       results.sessionsCreated++;
 
       let exerciseOrder = 0;
@@ -214,60 +212,55 @@ export async function importCSVData(rows: CSVRow[]) {
           continue;
         }
 
-        const type = inferExerciseType(exerciseRows);
-        const result = await getOrCreateExercise(exerciseName, legacyKey, type);
+        let exercise = exerciseCache.get(exerciseName.toLowerCase()) ?? null;
 
-        if (!result) {
-          results.errors.push(`Could not resolve muscle group for "${exerciseName}" (${categoryName})`);
-          continue;
+        if (!exercise) {
+          const muscleGroupId = mgByLegacyKey.get(legacyKey);
+          if (!muscleGroupId) {
+            results.errors.push(`Could not resolve muscle group for "${exerciseName}" (${categoryName})`);
+            continue;
+          }
+          const type = inferExerciseType(exerciseRows);
+          exercise = await createExercise(userId, { name: exerciseName, muscleGroupId, type, isCustom: false });
+          exerciseCache.set(exerciseName.toLowerCase(), exercise);
+          results.exercisesCreated++;
         }
 
-        const { exercise } = result;
-        if (result.created) results.exercisesCreated++;
-
-        const now = new Date();
-        const sessionExercise: SessionExercise = {
+        const se = await createSessionExercise(userId, {
           id: crypto.randomUUID(),
           sessionId: session.id,
           exerciseId: exercise.id,
-          notes: '',
           order: exerciseOrder++,
-          createdAt: now,
-          updatedAt: now,
-        };
+        });
 
-        await db.sessionExercises.add(sessionExercise);
-
+        const type = inferExerciseType(exerciseRows);
         let setOrder = 0;
         for (const row of exerciseRows) {
-          const set: Partial<WorkoutSet> & Pick<WorkoutSet, 'id' | 'sessionExerciseId' | 'order' | 'isWarmup' | 'createdAt' | 'updatedAt'> = {
+          const setData: Parameters<typeof createSet>[1] = {
             id: crypto.randomUUID(),
-            sessionExerciseId: sessionExercise.id,
+            sessionExerciseId: se.id,
             isWarmup: false,
             order: setOrder++,
-            completedAt: new Date(),
-            createdAt: now,
-            updatedAt: now,
           };
 
           if (type === 'weight_reps' || type === 'bodyweight_reps') {
-            if ((!row.reps || row.reps <= 0)) continue;
-            set.reps = row.reps;
-            if (row.weight && !isNaN(row.weight) && row.weight > 0) set.weight = row.weight;
+            if (!row.reps || row.reps <= 0) continue;
+            setData.reps = row.reps;
+            if (row.weight && !isNaN(row.weight) && row.weight > 0) setData.weight = row.weight;
           } else if (type === 'duration') {
             const secs = row.time ? parseTimeToSeconds(row.time) : 0;
             if (secs <= 0) continue;
-            set.duration = secs;
+            setData.duration = secs;
           } else if (type === 'distance') {
             if (!row.distance || isNaN(row.distance) || row.distance <= 0) continue;
-            set.distance = toMeters(row.distance, row.distanceUnit ?? 'km');
+            setData.distance = toMeters(row.distance, row.distanceUnit ?? 'km');
             if (row.time) {
               const secs = parseTimeToSeconds(row.time);
-              if (secs > 0) set.duration = secs;
+              if (secs > 0) setData.duration = secs;
             }
           }
 
-          await db.sets.add(set as WorkoutSet);
+          await createSet(userId, setData);
           results.setsCreated++;
         }
       }
@@ -277,34 +270,4 @@ export async function importCSVData(rows: CSVRow[]) {
   }
 
   return results;
-}
-
-export async function validateCSV(rows: CSVRow[]) {
-  const summary = {
-    totalRows: rows.length,
-    uniqueExercises: new Set<string>(),
-    missingExercises: [] as string[],
-    unmappedCategories: new Set<string>(),
-    dateRange: { start: '', end: '' },
-  };
-
-  const exercises = extractUniqueExercises(rows);
-
-  for (const [exerciseName, category] of exercises) {
-    summary.uniqueExercises.add(exerciseName);
-
-    const muscleGroupId = mapCategoryToMuscleGroup(category);
-    if (!muscleGroupId) summary.unmappedCategories.add(category);
-
-    const exists = await exerciseExists(exerciseName);
-    if (!exists) summary.missingExercises.push(exerciseName);
-  }
-
-  const dates = rows.map((r) => r.date).filter(Boolean).sort();
-  if (dates.length > 0) {
-    summary.dateRange.start = dates[0];
-    summary.dateRange.end = dates[dates.length - 1];
-  }
-
-  return summary;
 }

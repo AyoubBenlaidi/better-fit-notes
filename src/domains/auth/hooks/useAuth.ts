@@ -1,39 +1,56 @@
 import { useEffect } from 'react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
-import { initialSync, startSync, stopSync } from '@/lib/sync';
+import { useSettingsStore } from '@/stores/settingsStore';
+import { getSettings, seedLibrary, getMuscleGroups } from '@/lib/api';
 
 export function useAuthInit() {
   const { setUser, setLoading } = useAuthStore();
+  const { updateSettings } = useSettingsStore();
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) {
-      console.log('[Auth] ℹ️ Supabase not configured');
       setLoading(false);
       return;
     }
 
-    console.log('[Auth] 🔍 Checking existing session...');
-
-    // Single source of truth: onAuthStateChange fires immediately with the
-    // current session (INITIAL_SESSION event), so we don't need getSession().
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
         console.log(`[Auth] ✅ ${event} — ${session.user.email}`);
         setUser(session.user);
         setLoading(false);
-        initialSync(session.user.id).catch(console.error);
-        startSync();
+
+        // Load or seed user data
+        const userId = session.user.id;
+        try {
+          const [settings, muscleGroups] = await Promise.all([
+            getSettings(userId),
+            getMuscleGroups(userId),
+          ]);
+
+          // Apply settings from Supabase if they exist
+          if (settings) updateSettings(settings);
+
+          // First login: seed the exercise library
+          if (muscleGroups.length === 0) {
+            console.log('[Auth] 🌱 First login — seeding library…');
+            await seedLibrary(userId);
+            // Re-fetch settings after seed
+            const seeded = await getSettings(userId);
+            if (seeded) updateSettings(seeded);
+          }
+        } catch (err) {
+          console.error('[Auth] ❌ Post-login setup failed', err);
+        }
       } else {
         console.log(`[Auth] 🚪 ${event} — signed out`);
         setUser(null);
         setLoading(false);
-        stopSync();
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [setUser, setLoading]);
+  }, [setUser, setLoading, updateSettings]);
 }
 
 export async function signIn(email: string, password: string) {
