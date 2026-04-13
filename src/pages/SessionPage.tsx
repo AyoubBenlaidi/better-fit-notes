@@ -26,6 +26,8 @@ export function SessionPage() {
   const [draggedExerciseId, setDraggedExerciseId] = useState<string | null>(null);
   const [dragOverExerciseId, setDragOverExerciseId] = useState<string | null>(null);
 
+  // Global refetch is handled by App.tsx after Zustand rehydration
+
   const session = useActiveSession(id!);
   const sessionExercises = useSessionExercises(id!);
   const addExercise = useAddExerciseToSession();

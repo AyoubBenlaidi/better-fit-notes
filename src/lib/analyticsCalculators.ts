@@ -1,4 +1,8 @@
-import { subMonths, startOfWeek, endOfWeek, format, eachWeekOfInterval, startOfMonth } from 'date-fns';
+import {
+  subMonths, startOfWeek, endOfWeek, format,
+  eachWeekOfInterval, eachDayOfInterval, eachMonthOfInterval,
+  startOfMonth, endOfMonth,
+} from 'date-fns';
 import type { Session, WorkoutSet, SessionExercise, Exercise } from '@/types/entities';
 
 export type PeriodType = 'week' | 'month' | '3months' | 'year' | 'alltime';
@@ -87,7 +91,11 @@ export function calculatePeriodVolume(
 }
 
 /**
- * Get weekly breakdown data for a period
+ * Get volume breakdown data for a period.
+ * Granularity adapts to the period:
+ *   week     → daily   (Mon–Sun)
+ *   month / 3months → weekly
+ *   year / alltime  → monthly
  */
 export function getWeeklyBreakdown(
   sessions: Session[],
@@ -99,32 +107,54 @@ export function getWeeklyBreakdown(
 ): { week: string; volume: number; date: Date; sessions: number }[] {
   const config = getPeriodConfig(periodType);
 
-  // Generate week intervals
-  const weeks = eachWeekOfInterval({
-    start: config.startDate,
-    end: config.endDate,
-  }, { weekStartsOn: 1 });
-
   const exercisesByType = new Map(exercises.map((e) => [e.id, e.type]));
-  // Build once outside the per-week loop
   const seMap = new Map(sessionExercises.map((se) => [se.id, se]));
 
-  return weeks.map((weekStart) => {
-    const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
-    const ws = format(weekStart, 'yyyy-MM-dd');
-    const we = format(weekEnd, 'yyyy-MM-dd');
+  // Build intervals with [start, end, label] based on granularity
+  type Interval = { start: Date; end: Date; label: string };
+  let intervals: Interval[];
 
-    const weekSessions = sessions.filter(
+  if (periodType === 'week') {
+    // Daily bars: Mon → Sun
+    intervals = eachDayOfInterval({ start: config.startDate, end: config.endDate }).map((day) => ({
+      start: day,
+      end: day,
+      label: format(day, 'EEE'), // Mon, Tue, …
+    }));
+  } else if (periodType === 'year' || periodType === 'alltime') {
+    // Monthly bars
+    intervals = eachMonthOfInterval({ start: config.startDate, end: config.endDate }).map((month) => ({
+      start: month,
+      end: endOfMonth(month),
+      label: format(month, 'MMM'),
+    }));
+  } else {
+    // Weekly bars (month, 3months)
+    intervals = eachWeekOfInterval(
+      { start: config.startDate, end: config.endDate },
+      { weekStartsOn: 1 },
+    ).map((weekStart) => ({
+      start: weekStart,
+      end: endOfWeek(weekStart, { weekStartsOn: 1 }),
+      label: format(weekStart, 'MMM d'),
+    }));
+  }
+
+  return intervals.map(({ start, end, label }) => {
+    const ws = format(start, 'yyyy-MM-dd');
+    const we = format(end, 'yyyy-MM-dd');
+
+    const slotSessions = sessions.filter(
       (s) => s.date >= ws && s.date <= we && (!activeSessionIds || activeSessionIds.has(s.id)),
     );
-    const weekSessionIds = new Set(weekSessions.map((s) => s.id));
-    const weekSEIds = new Set(
-      sessionExercises.filter((se) => weekSessionIds.has(se.sessionId)).map((se) => se.id),
+    const slotSessionIds = new Set(slotSessions.map((s) => s.id));
+    const slotSEIds = new Set(
+      sessionExercises.filter((se) => slotSessionIds.has(se.sessionId)).map((se) => se.id),
     );
 
     let volume = 0;
     for (const set of sets) {
-      if (!weekSEIds.has(set.sessionExerciseId)) continue;
+      if (!slotSEIds.has(set.sessionExerciseId)) continue;
       const se = seMap.get(set.sessionExerciseId);
       if (!se) continue;
       if (exercisesByType.get(se.exerciseId) !== 'weight_reps') continue;
@@ -133,10 +163,10 @@ export function getWeeklyBreakdown(
     }
 
     return {
-      week: format(weekStart, 'MMM d'),
+      week: label,
       volume: Math.round(volume),
-      date: weekStart,
-      sessions: weekSessions.length,
+      date: start,
+      sessions: slotSessions.length,
     };
   });
 }

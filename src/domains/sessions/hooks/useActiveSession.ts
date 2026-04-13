@@ -56,6 +56,10 @@ export function useAddExerciseToSession() {
       // ['sessionExercises', sessionId] is also used by CalendarPage — both get fresh data
       queryClient.invalidateQueries({ queryKey: ['sessionExercises', se.sessionId] });
       queryClient.invalidateQueries({ queryKey: ['sets', se.id] });
+      
+      // Invalidate analytics cache since session now has one more exercise
+      queryClient.invalidateQueries({ queryKey: ['sessionStats'] });
+      queryClient.invalidateQueries({ queryKey: ['volumeStats'] });
     },
   });
 }
@@ -78,6 +82,10 @@ export function useRemoveExerciseFromSession() {
     onSuccess: ({ sessionExerciseId, sessionId }) => {
       queryClient.removeQueries({ queryKey: ['sets', sessionExerciseId] });
       if (sessionId) queryClient.invalidateQueries({ queryKey: ['sessionExercises', sessionId] });
+      
+      // Invalidate analytics cache since session now has one fewer exercise
+      queryClient.invalidateQueries({ queryKey: ['sessionStats'] });
+      queryClient.invalidateQueries({ queryKey: ['volumeStats'] });
     },
   });
 }
@@ -94,6 +102,8 @@ export function useAddSet() {
       }),
     onSuccess: (set) => {
       queryClient.invalidateQueries({ queryKey: ['sets', set.sessionExerciseId] });
+      // Invalidate analytics cache since volume may have changed
+      queryClient.invalidateQueries({ queryKey: ['volumeStats'] });
     },
   });
 }
@@ -106,6 +116,9 @@ export function useUpdateSet() {
       updateSet(id, data),
     onSuccess: (set) => {
       queryClient.invalidateQueries({ queryKey: ['sets', set.sessionExerciseId] });
+      // Invalidate analytics cache since volume or completion status may have changed
+      queryClient.invalidateQueries({ queryKey: ['volumeStats'] });
+      queryClient.invalidateQueries({ queryKey: ['sessionStats'] });
     },
   });
 }
@@ -128,6 +141,8 @@ export function useDeleteSet() {
     },
     onSuccess: (sessionExerciseId) => {
       if (sessionExerciseId) queryClient.invalidateQueries({ queryKey: ['sets', sessionExerciseId] });
+      // Invalidate analytics cache since volume has changed
+      queryClient.invalidateQueries({ queryKey: ['volumeStats'] });
     },
   });
 }

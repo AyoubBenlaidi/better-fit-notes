@@ -14,7 +14,7 @@ import { Search, Trophy, TrendingUp, Calendar, Activity } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { clsx } from 'clsx';
 import {
-  getPeriodConfig, calculatePeriodVolume, getWeeklyBreakdown,
+  getPeriodConfig, getWeeklyBreakdown,
   getMuscleDistribution, type PeriodType,
 } from '@/lib/analyticsCalculators';
 import { useAuthStore } from '@/stores/authStore';
@@ -23,6 +23,7 @@ import {
   getAnalyticsData, getSessionExercisesInRange,
   getSessionIdsWithExercises,
   getPersonalRecords, getExerciseChartData,
+  getSessionStats, getVolumeStats,
 } from '@/lib/api';
 
 type Tab = 'overview' | 'exercise' | 'records';
@@ -108,6 +109,22 @@ function OverviewTab() {
     return { mgStart: format(cfg.startDate, 'yyyy-MM-dd'), mgEnd: format(cfg.endDate, 'yyyy-MM-dd') };
   }, [musclePeriodType]);
 
+  // Get session stats from API (total, thisWeek, thisMonth)
+  const { data: sessionStats } = useQuery({
+    queryKey: ['sessionStats', user?.id],
+    queryFn: () => getSessionStats(user!.id),
+    enabled: !!user,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Get volume stats for the current period
+  const { data: periodVolumeStats } = useQuery({
+    queryKey: ['volumeStats', user?.id, pStart, pEnd],
+    queryFn: () => getVolumeStats(user!.id, pStart, pEnd),
+    enabled: !!user,
+    staleTime: 5 * 60 * 1000,
+  });
+
   const { data: sessions } = useQuery({ queryKey: ['sessions', user?.id], queryFn: () => getSessions(user!.id), enabled: !!user });
   const { data: muscleGroups } = useQuery({ queryKey: ['muscleGroups', user?.id], queryFn: () => getMuscleGroups(user!.id), enabled: !!user, staleTime: Infinity });
   const { data: allExercises } = useQuery({ queryKey: ['exercises', user?.id], queryFn: () => getExercises(user!.id), enabled: !!user, staleTime: Infinity });
@@ -136,18 +153,18 @@ function OverviewTab() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // Global refetch is handled by App.tsx after Zustand rehydration
   const mgMap = useMemo(() => new Map(muscleGroups?.map((mg) => [mg.id, mg]) ?? []), [muscleGroups]);
   const periodConfig = getPeriodConfig(periodType);
 
   const weeklyData = useMemo(() => {
     if (!sessions || !analyticsData || !allExercises) return [];
-    return getWeeklyBreakdown(sessions, analyticsData.sessionExercises, analyticsData.sets, allExercises, periodType, activeSessionIds);
+    const activeIds = activeSessionIds ? new Set(activeSessionIds) : undefined;
+    return getWeeklyBreakdown(sessions, analyticsData.sessionExercises, analyticsData.sets, allExercises, periodType, activeIds);
   }, [sessions, analyticsData, allExercises, periodType, activeSessionIds]);
 
-  const totalVolume = useMemo(() => {
-    if (!sessions || !analyticsData || !allExercises) return 0;
-    return calculatePeriodVolume(sessions, analyticsData.sessionExercises, analyticsData.sets, allExercises, periodType);
-  }, [sessions, analyticsData, allExercises, periodType]);
+  // Use API-fetched volume for the selected period instead of calculating locally
+  const totalVolume = periodVolumeStats?.volume ?? 0;
 
   const heatmapData = useMemo(() => {
     if (!sessions) return [];
@@ -165,15 +182,7 @@ function OverviewTab() {
     return getMuscleDistribution(sessions, muscleSEs, allExercises, mgMap, musclePeriodType);
   }, [sessions, muscleSEs, allExercises, muscleGroups, mgMap, musclePeriodType]);
 
-  const thisWeek = weeklyData[weeklyData.length - 1];
-  const thirtyDaysAgo = format(subDays(new Date(), 30), 'yyyy-MM-dd');
-
-  const activeSessions = useMemo(
-    () => (sessions ?? []).filter((s) => !activeSessionIds || activeSessionIds.has(s.id)),
-    [sessions, activeSessionIds],
-  );
-
-  if (!sessions) return <SkeletonList count={3} />;
+  if (!sessions || !sessionStats) return <SkeletonList count={3} />;
 
   const periodButtons: { value: PeriodType; label: string }[] = [
     { value: 'week', label: 'Week' }, { value: 'month', label: 'Month' },
@@ -183,9 +192,9 @@ function OverviewTab() {
   return (
     <div className="flex flex-col gap-4 p-4">
       <div className="grid grid-cols-3 gap-2">
-        <StatCard label="Total" value={activeSessions.length} sub="sessions" />
-        <StatCard label="This week" value={thisWeek?.sessions ?? 0} sub="sessions" />
-        <StatCard label="30 days" value={activeSessions.filter((s) => s.date >= thirtyDaysAgo).length} sub="sessions" />
+        <StatCard label="Total" value={sessionStats.total} sub="sessions" />
+        <StatCard label="This week" value={sessionStats.thisWeek} sub="sessions" />
+        <StatCard label="This month" value={sessionStats.thisMonth} sub="sessions" />
       </div>
 
       <div className="flex flex-col gap-3">

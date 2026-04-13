@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Sun, Moon, Monitor, Download, Upload, Trash2, Info, LogOut, User2 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
@@ -6,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { toast } from '@/components/ui/Toast';
 import { useAuthStore } from '@/stores/authStore';
+import { useSessionStore } from '@/stores/sessionStore';
 import { signOut } from '@/domains/auth/hooks/useAuth';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { clsx } from 'clsx';
@@ -16,6 +18,7 @@ export function SettingsPage() {
   const { settings, updateSettings } = useSettingsStore();
   const { user } = useAuthStore();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [importingCSV, setImportingCSV] = useState(false);
 
   const settingsMutation = useMutation({
@@ -155,8 +158,28 @@ export function SettingsPage() {
   }
 
   async function handleSignOut() {
+    // Clear stores
+    useAuthStore.setState({ user: null });
+    useSessionStore.setState({ activeSessionId: null });
+    useSettingsStore.setState({
+      settings: {
+        id: 'user-settings',
+        weightUnit: 'kg',
+        dateFormat: 'DD/MM/YYYY',
+        theme: 'dark',
+        firstDayOfWeek: 1,
+      },
+    });
+    
+    // Clear React Query cache
+    queryClient.clear();
+    
+    // Sign out from Supabase
     await signOut();
+    
+    // Redirect to auth page
     toast('Signed out', 'info');
+    navigate('/auth', { replace: true });
   }
 
   return (

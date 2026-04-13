@@ -37,6 +37,8 @@ export function CalendarPage() {
   const firstDay = settings.firstDayOfWeek;
   const weekdays = firstDay === 1 ? WEEKDAYS_MON : WEEKDAYS_SUN;
 
+  // Global refetch is handled by App.tsx after Zustand rehydration
+
   const { data: sessions } = useQuery({
     queryKey: ['sessions', user?.id],
     queryFn: () => getSessions(user!.id),
@@ -181,6 +183,9 @@ export function CalendarPage() {
     onSuccess: (newId) => {
       queryClient.invalidateQueries({ queryKey: ['sessions', user?.id] });
       queryClient.invalidateQueries({ queryKey: ['allSessionExercises', user?.id] });
+      // Invalidate analytics cache since new exercises were copied
+      queryClient.invalidateQueries({ queryKey: ['sessionStats'] });
+      queryClient.invalidateQueries({ queryKey: ['volumeStats'] });
       closePanel();
       navigate(`/session/${newId}`);
     },

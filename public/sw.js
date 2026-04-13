@@ -1,64 +1,37 @@
-const CACHE_NAME = 'bfn-v1';
-
-const STATIC_ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-];
+// Connected-first: No caching, always serve fresh from network
+// Version: 2024-04-13-v2 (forces update check)
+// This SW exists only to serve index.html for SPA routing
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
-  );
+  // Force immediate activation
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
+  // Clean ALL old caches on activation
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    )
+    caches.keys().then((keys) => {
+      console.log('[SW] Cleaning caches:', keys);
+      return Promise.all(keys.map((k) => caches.delete(k)));
+    })
   );
   self.clients.claim();
+  console.log('[SW] Activated - all caches cleared');
 });
 
-// Network-first for API calls, cache-first for assets
+// Only handle SPA navigation - everything else goes to network
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-  const url = new URL(request.url);
+  
+  // Only handle navigate requests (page navigation)
+  if (request.mode !== 'navigate') return;
 
-  // Skip non-GET and supabase calls
-  if (request.method !== 'GET') return;
-  if (url.hostname.includes('supabase.co')) return;
-
-  // Cache-first for static assets (JS/CSS/fonts/images)
-  if (
-    url.pathname.startsWith('/assets/') ||
-    url.pathname.endsWith('.svg') ||
-    url.pathname.endsWith('.png') ||
-    url.pathname.endsWith('.ico')
-  ) {
-    event.respondWith(
-      caches.match(request).then((cached) => {
-        if (cached) return cached;
-        return fetch(request).then((res) => {
-          const clone = res.clone();
-          caches.open(CACHE_NAME).then((c) => c.put(request, clone));
-          return res;
-        });
-      })
-    );
-    return;
-  }
-
-  // Network-first with cache fallback for navigation
+  // For SPA: serve /index.html for all navigation requests
   event.respondWith(
-    fetch(request)
-      .then((res) => {
-        const clone = res.clone();
-        caches.open(CACHE_NAME).then((c) => c.put(request, clone));
-        return res;
+    fetch('/index.html', { cache: 'no-store' })
+      .catch(() => {
+        // If network fails, at least try to serve from cache as last resort
+        return caches.match('/index.html');
       })
-      .catch(() => caches.match(request).then((cached) => cached ?? caches.match('/')))
   );
 });

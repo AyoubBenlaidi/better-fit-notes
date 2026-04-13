@@ -14,6 +14,7 @@ export function HistoryPage() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
 
+  // Global refetch is handled by App.tsx after Zustand rehydration
   const { data: sessions, isLoading } = useQuery({
     queryKey: ['sessions', user?.id],
     queryFn: () => getSessions(user!.id),

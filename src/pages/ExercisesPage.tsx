@@ -28,6 +28,7 @@ export function ExercisesPage() {
   const [editTarget, setEditTarget] = useState<Exercise | null>(null);
   const [colorsModalOpen, setColorsModalOpen] = useState(false);
 
+  // Global refetch is handled by App.tsx after Zustand rehydration
   const debouncedSearch = useDebounce(search, 300);
   const muscleGroups = useMuscleGroups();
   const exercises = useExercises({

@@ -1,9 +1,11 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { UserSettings } from '@/types/entities';
 
 interface SettingsState {
   settings: UserSettings;
   updateSettings: (partial: Partial<UserSettings>) => void;
+  _hydrated: boolean;
 }
 
 const defaultSettings: UserSettings = {
@@ -14,11 +16,23 @@ const defaultSettings: UserSettings = {
   firstDayOfWeek: 1,
 };
 
-export const useSettingsStore = create<SettingsState>((set) => ({
-  settings: defaultSettings,
-  updateSettings: (partial) =>
-    set((state) => ({ settings: { ...state.settings, ...partial } })),
-}));
+export const useSettingsStore = create<SettingsState>()(
+  persist(
+    (set) => ({
+      settings: defaultSettings,
+      updateSettings: (partial) =>
+        set((state) => ({ settings: { ...state.settings, ...partial } })),
+      _hydrated: false,
+    }),
+    {
+      name: 'bfn-settings',
+      partialize: (state) => ({ settings: state.settings }),
+      onRehydrateStorage: () => (state) => {
+        if (state) state._hydrated = true;
+      },
+    }
+  )
+);
 
 export function convertWeight(value: number, from: 'kg' | 'lbs', to: 'kg' | 'lbs'): number {
   if (from === to) return value;

@@ -4,6 +4,20 @@ import { useAuthStore } from '@/stores/authStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { getSettings, seedLibrary, getMuscleGroups } from '@/lib/api';
 
+async function setupUserData(userId: string, updateSettings: (p: Partial<any>) => void) {
+  const [settings, muscleGroups] = await Promise.all([
+    getSettings(userId),
+    getMuscleGroups(userId),
+  ]);
+  if (settings) updateSettings(settings);
+  if (muscleGroups.length === 0) {
+    console.log('[Auth] 🌱 First login — seeding library…');
+    await seedLibrary(userId);
+    const seeded = await getSettings(userId);
+    if (seeded) updateSettings(seeded);
+  }
+}
+
 export function useAuthInit() {
   const { setUser, setLoading } = useAuthStore();
   const { updateSettings } = useSettingsStore();
@@ -14,36 +28,34 @@ export function useAuthInit() {
       return;
     }
 
+    // Resolve loading immediately from localStorage (no network required).
+    // If the access token is expired, Supabase may make one refresh call here,
+    // but it will always resolve (session or null) rather than hanging forever.
+    supabase.auth.getSession().then(async ({ data: { session }, error }) => {
+      if (error) console.warn('[Auth] getSession error:', error.message);
+
+      const user = session?.user ?? null;
+      setUser(user);
+      setLoading(false);
+
+      if (user) {
+        try { await setupUserData(user.id, updateSettings); }
+        catch (err) { console.error('[Auth] ❌ Post-init setup failed', err); }
+      }
+    });
+
+    // Keep listening for sign-in / sign-out / token refresh events.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user) {
-        console.log(`[Auth] ✅ ${event} — ${session.user.email}`);
+      if (event === 'SIGNED_IN' && session?.user) {
+        console.log(`[Auth] ✅ SIGNED_IN — ${session.user.email}`);
         setUser(session.user);
         setLoading(false);
-
-        // Load or seed user data
-        const userId = session.user.id;
-        try {
-          const [settings, muscleGroups] = await Promise.all([
-            getSettings(userId),
-            getMuscleGroups(userId),
-          ]);
-
-          // Apply settings from Supabase if they exist
-          if (settings) updateSettings(settings);
-
-          // First login: seed the exercise library
-          if (muscleGroups.length === 0) {
-            console.log('[Auth] 🌱 First login — seeding library…');
-            await seedLibrary(userId);
-            // Re-fetch settings after seed
-            const seeded = await getSettings(userId);
-            if (seeded) updateSettings(seeded);
-          }
-        } catch (err) {
-          console.error('[Auth] ❌ Post-login setup failed', err);
-        }
-      } else {
-        console.log(`[Auth] 🚪 ${event} — signed out`);
+        try { await setupUserData(session.user.id, updateSettings); }
+        catch (err) { console.error('[Auth] ❌ Post-login setup failed', err); }
+      } else if (event === 'TOKEN_REFRESHED' && session?.user) {
+        setUser(session.user);
+      } else if (event === 'SIGNED_OUT') {
+        console.log('[Auth] 🚪 Signed out');
         setUser(null);
         setLoading(false);
       }
@@ -76,7 +88,15 @@ export async function signInWithMagicLink(email: string) {
 
 export async function signOut() {
   if (!supabase) return;
+  
+  // Clear Supabase session
   await supabase.auth.signOut();
+  
+  // Clear localStorage to ensure complete cleanup
+  const keys = Object.keys(localStorage).filter(key => 
+    key.startsWith('sb-') || key === 'auth' || key === 'supabase'
+  );
+  keys.forEach(key => localStorage.removeItem(key));
 }
 
 export async function resetPassword(email: string) {

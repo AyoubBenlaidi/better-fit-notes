@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { startOfWeek, endOfWeek, startOfMonth, format } from 'date-fns';
 import type {
   MuscleGroup, Exercise, ExerciseType, Session, SessionExercise, WorkoutSet,
   Template, TemplateExercise, PersonalRecord, PersonalRecordType, UserSettings,
@@ -95,12 +96,14 @@ export async function deleteExercise(id: string): Promise<void> {
 
 // ─── Sessions ─────────────────────────────────────────────────────────────────
 
-/** Returns the set of session IDs that have at least one exercise — lightweight for analytics counts */
-export async function getSessionIdsWithExercises(userId: string): Promise<Set<string>> {
+/** Returns the array of session IDs that have at least one exercise — lightweight for analytics counts */
+export async function getSessionIdsWithExercises(userId: string): Promise<string[]> {
   const { data, error } = await sb()
     .from('session_exercises').select('session_id').eq('user_id', userId);
   if (error) throw error;
-  return new Set((data ?? []).map((r) => r.session_id as string));
+  // Return as array instead of Set for JSON serialization in React Query cache
+  const ids = new Set((data ?? []).map((r) => r.session_id as string));
+  return Array.from(ids);
 }
 
 export async function getSessions(userId: string): Promise<Session[]> {
@@ -356,6 +359,156 @@ export async function getAnalyticsData(
   )).flat();
 
   return { sessionExercises, sets };
+}
+
+/**
+ * Get session statistics for analytics dashboard:
+ * - total: all-time session count
+ * - thisWeek: sessions in current week (Monday–Sunday)
+ * - thisMonth: sessions in the current calendar month
+ * Uses 3 parallel count-only queries — no rows fetched.
+ */
+export async function getSessionStats(userId: string): Promise<{
+  total: number;
+  thisWeek: number;
+  thisMonth: number;
+}> {
+  const now = new Date();
+  const weekStartStr = format(startOfWeek(now, { weekStartsOn: 1 }), 'yyyy-MM-dd');
+  const weekEndStr = format(endOfWeek(now, { weekStartsOn: 1 }), 'yyyy-MM-dd');
+  const monthStartStr = format(startOfMonth(now), 'yyyy-MM-dd');
+  const todayStr = format(now, 'yyyy-MM-dd');
+
+  const base = () => sb().from('sessions').select('*', { count: 'exact', head: true }).eq('user_id', userId);
+
+  const [totalRes, weekRes, monthRes] = await Promise.all([
+    base(),
+    base().gte('date', weekStartStr).lte('date', weekEndStr),
+    base().gte('date', monthStartStr).lte('date', todayStr),
+  ]);
+
+  if (totalRes.error) throw totalRes.error;
+  if (weekRes.error) throw weekRes.error;
+  if (monthRes.error) throw monthRes.error;
+
+  return {
+    total: totalRes.count ?? 0,
+    thisWeek: weekRes.count ?? 0,
+    thisMonth: monthRes.count ?? 0,
+  };
+}
+
+/**
+ * Get volume statistics for a date range:
+ * - volume: total weight (kg) × reps for weight_reps sets
+ * - setCount: total number of sets
+ * Handles pagination properly for large datasets.
+ */
+export async function getVolumeStats(
+  userId: string,
+  startDate: string,
+  endDate: string,
+): Promise<{
+  volume: number;
+  setCount: number;
+}> {
+  try {
+    // Get sessions in date range (with pagination)
+    const allSessions: Array<{ id: string }> = [];
+    let offset = 0;
+    const PAGE_SIZE = 1000;
+    
+    while (true) {
+      const { data, error } = await sb()
+        .from('sessions')
+        .select('id')
+        .eq('user_id', userId)
+        .gte('date', startDate)
+        .lte('date', endDate)
+        .range(offset, offset + PAGE_SIZE - 1);
+      
+      if (error) throw error;
+      if (!data?.length) break;
+      
+      allSessions.push(...data);
+      if (data.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
+
+    if (allSessions.length === 0) {
+      return { volume: 0, setCount: 0 };
+    }
+
+    const sessionIds = allSessions.map((s) => s.id);
+
+    // Get session exercises in batches
+    const allSessionExercises: Array<{ id: string; exercise_id: string }> = [];
+    const sessionExerciseChunks = chunks(sessionIds, 100);
+    
+    for (const chunk of sessionExerciseChunks) {
+      const { data, error } = await sb()
+        .from('session_exercises')
+        .select('id, exercise_id')
+        .eq('user_id', userId)
+        .in('session_id', chunk);
+
+      if (error) throw error;
+      if (data) allSessionExercises.push(...data);
+    }
+
+    if (allSessionExercises.length === 0) {
+      return { volume: 0, setCount: 0 };
+    }
+
+    const seIds = allSessionExercises.map((se) => se.id);
+    const seExerciseMap = new Map(
+      allSessionExercises.map((se) => [se.id, se.exercise_id])
+    );
+
+    // Get sets in batches
+    const allSets: Array<{ session_exercise_id: string; weight: number | null; reps: number | null }> = [];
+    const setChunks = chunks(seIds, 100);
+    
+    for (const chunk of setChunks) {
+      const { data, error } = await sb()
+        .from('sets')
+        .select('session_exercise_id, weight, reps')
+        .in('session_exercise_id', chunk);
+      
+      if (error) throw error;
+      if (data) allSets.push(...data);
+    }
+
+    // Get exercises to filter by type
+    const { data: exercisesData, error: exErr } = await sb()
+      .from('exercises')
+      .select('id, type')
+      .eq('user_id', userId);
+    if (exErr) throw exErr;
+
+    const exerciseTypeMap = new Map(
+      (exercisesData ?? []).map((ex) => [ex.id as string, ex.type as string])
+    );
+
+    let volume = 0;
+    let setCount = allSets.length;
+
+    for (const set of allSets) {
+      const seId = set.session_exercise_id;
+      const exerciseId = seExerciseMap.get(seId);
+      const exerciseType = exerciseId ? exerciseTypeMap.get(exerciseId) : null;
+
+      // Only count weight_reps exercises with weight and reps
+      if (exerciseType === 'weight_reps' && set.weight && set.reps) {
+        volume += set.weight * set.reps;
+      }
+    }
+
+    return { volume, setCount };
+  } catch (err) {
+    console.error('[Analytics] getVolumeStats error:', err);
+    return { volume: 0, setCount: 0 };
+  }
 }
 
 export async function createSet(
