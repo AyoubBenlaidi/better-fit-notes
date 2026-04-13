@@ -202,10 +202,11 @@ export function SetRow({ set, index, exerciseType, lastSet, muscleGroupColor }: 
         <Check size={18} strokeWidth={2} />
       </button>
 
-      {/* Delete button — hidden by default, visible on hover */}
+      {/* Delete button — visible on focus/hover/active */}
       <button
         onClick={() => deleteSet.mutate(set.id)}
-        className="h-9 w-9 rounded-xl flex items-center justify-center flex-shrink-0 text-text-muted opacity-0 hover:opacity-100 active:bg-surface-raised active:text-red-400 transition-all duration-100"
+        className="h-9 w-9 rounded-xl flex items-center justify-center flex-shrink-0 text-text-muted hover:opacity-100 focus:opacity-100 active:bg-surface-raised active:text-red-400 transition-all duration-100"
+        style={{ opacity: 0.6 }}
       >
         <Trash2 size={16} />
       </button>
