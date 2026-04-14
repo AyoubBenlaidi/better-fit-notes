@@ -73,16 +73,26 @@ export async function signIn(email: string, password: string) {
 
 export async function signUp(email: string, password: string) {
   if (!supabase) throw new Error('Supabase not configured');
+  console.log('[Auth] 📝 Signing up:', email);
   const { error } = await supabase.auth.signUp({ email, password });
   if (error) throw error;
 
   // Send welcome email asynchronously (don't fail signup if email fails)
+  console.log('[Auth] 📧 Triggering welcome email for:', email);
   try {
-    await fetch('/api/auth/send-welcome-email', {
+    const response = await fetch('/api/auth/send-welcome-email', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, name: email.split('@')[0] }),
     });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.warn('[Auth] ⚠️ Email API error:', response.status, errorData);
+    } else {
+      const successData = await response.json();
+      console.log('[Auth] ✅ Welcome email sent:', successData);
+    }
   } catch (err) {
     console.warn('[Auth] ⚠️ Failed to send welcome email:', err);
     // Don't throw — signup should succeed even if email fails

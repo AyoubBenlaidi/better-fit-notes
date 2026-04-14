@@ -8,9 +8,11 @@ async function sendBrevoEmail(params: {
 }) {
   const apiKey = process.env.BREVO_API_KEY;
   if (!apiKey) {
+    console.error('[BREVO] ❌ BREVO_API_KEY is not configured');
     throw new Error('BREVO_API_KEY is not configured');
   }
 
+  console.log('[BREVO] 📤 Sending email to:', params.to[0].email);
   const response = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: {
@@ -31,10 +33,13 @@ async function sendBrevoEmail(params: {
 
   if (!response.ok) {
     const error = await response.json();
+    console.error('[BREVO] ❌ API error:', error);
     throw new Error(`BREVO API error: ${error.message || response.statusText}`);
   }
 
-  return response.json();
+  const result = await response.json();
+  console.log('[BREVO] ✅ Email sent successfully, message ID:', result.messageId);
+  return result;
 }
 
 async function sendWelcomeEmail(userEmail: string, userName?: string) {
@@ -95,20 +100,24 @@ async function sendWelcomeEmail(userEmail: string, userName?: string) {
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
+    console.warn('[API] ⚠️ Invalid method:', req.method);
     return res.status(405).json({ message: 'Method not allowed' });
   }
 
   const { email, name } = req.body;
 
   if (!email) {
+    console.warn('[API] ⚠️ Missing email in request body');
     return res.status(400).json({ message: 'Email is required' });
   }
 
   try {
+    console.log('[API] 📧 Sending welcome email to:', email);
     await sendWelcomeEmail(email, name);
-    return res.status(200).json({ message: 'Welcome email sent successfully' });
+    console.log('[API] ✅ Welcome email sent successfully to:', email);
+    return res.status(200).json({ message: 'Welcome email sent successfully', email });
   } catch (error) {
-    console.error('Failed to send welcome email:', error);
+    console.error('[API] ❌ Failed to send welcome email to', email, ':', error);
     return res.status(500).json({ 
       message: 'Failed to send welcome email',
       error: error instanceof Error ? error.message : 'Unknown error'
