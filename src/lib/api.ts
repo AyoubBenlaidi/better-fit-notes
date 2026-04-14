@@ -10,7 +10,9 @@ import type {
 function toSnakeCase(obj: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
-    out[k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)] = v;
+    // Convert undefined to null for database compatibility
+    const value = v === undefined ? null : v;
+    out[k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)] = value;
   }
   return out;
 }
