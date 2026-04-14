@@ -53,7 +53,7 @@ export function SetRow({ set, index, exerciseType, lastSet, muscleGroupColor }: 
 
   function handleComplete() {
     if (isCompleted) {
-      updateSet.mutate({ id: set.id, completedAt: null });
+      updateSet.mutate({ id: set.id, completedAt: undefined });
       return;
     }
 

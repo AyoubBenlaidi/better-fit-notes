@@ -7,7 +7,6 @@ import {
 } from 'recharts';
 import { format, subDays } from 'date-fns';
 import { Header } from '@/components/layout/Header';
-import { SkeletonList } from '@/components/ui/Skeleton';
 import { Badge } from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Spinner';
 import { useDebounce } from '@/lib/useDebounce';
