@@ -8,6 +8,7 @@ import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/rea
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { BottomSheet } from '@/components/ui/BottomSheet';
+import { Spinner } from '@/components/ui/Spinner';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/components/ui/Toast';
@@ -314,10 +315,14 @@ export function CalendarPage() {
             {!hasSession && (
               <div className="flex flex-col gap-2">
                 <Button fullWidth loading={newSessionMutation.isPending} onClick={() => newSessionMutation.mutate()}>
-                  <Plus size={16} />
-                  Nouvelle séance
+                  {newSessionMutation.isPending ? (
+                    <Spinner variant="inline" size="sm" />
+                  ) : (
+                    <Plus size={16} />
+                  )}
+                  {newSessionMutation.isPending ? 'Création…' : 'Nouvelle séance'}
                 </Button>
-                <Button variant="secondary" fullWidth onClick={() => setPanelView('pick-source')}>
+                <Button variant="secondary" fullWidth onClick={() => setPanelView('pick-source')} disabled={copyMutation.isPending}>
                   <Copy size={15} />
                   Copier une séance précédente
                 </Button>
@@ -428,6 +433,10 @@ export function CalendarPage() {
           </div>
         )}
       </BottomSheet>
+
+      {copyMutation.isPending && (
+        <Spinner variant="overlay" size="lg" label="Copie en cours…" />
+      )}
     </div>
   );
 }

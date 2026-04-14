@@ -9,6 +9,7 @@ import { format, subDays } from 'date-fns';
 import { Header } from '@/components/layout/Header';
 import { SkeletonList } from '@/components/ui/Skeleton';
 import { Badge } from '@/components/ui/Badge';
+import { Spinner } from '@/components/ui/Spinner';
 import { useDebounce } from '@/lib/useDebounce';
 import { Search, Trophy, TrendingUp, Calendar, Activity } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -182,7 +183,9 @@ function OverviewTab() {
     return getMuscleDistribution(sessions, muscleSEs, allExercises, mgMap, musclePeriodType);
   }, [sessions, muscleSEs, allExercises, muscleGroups, mgMap, musclePeriodType]);
 
-  if (!sessions || !sessionStats) return <SkeletonList count={3} />;
+  // Show loading state if core data isn't ready yet
+  const isInitialLoading = !sessions || !sessionStats;
+  if (isInitialLoading) return <Spinner variant="default" size="lg" label="Loading analytics…" />;
 
   const periodButtons: { value: PeriodType; label: string }[] = [
     { value: 'week', label: 'Week' }, { value: 'month', label: 'Month' },
@@ -358,7 +361,9 @@ function ExerciseTab() {
       {selectedExerciseId && (
         <>
           {chartLoading ? (
-            <SkeletonList count={2} />
+            <div className="flex flex-col items-center justify-center py-12">
+              <Spinner variant="default" size="md" label="Loading chart…" />
+            </div>
           ) : chartData && chartData.length > 0 ? (
             <>
               <LineChartCard title="Max Weight (kg)" data={chartData} dataKey="maxWeight" />
@@ -417,7 +422,7 @@ function RecordsTab() {
   const typeUnits: Record<string, string> = { max_weight: 'kg', max_reps: 'reps', max_volume: 'kg', max_distance: 'm', max_duration: 's' };
   const typeEmoji: Record<string, string> = { max_weight: '🏋️', max_reps: '🔁', max_volume: '📊', max_distance: '📏', max_duration: '⏱️' };
 
-  if (!records) return <SkeletonList count={3} />;
+  if (!records) return <Spinner variant="default" size="lg" label="Loading records…" />;
 
   if (records.length === 0) {
     return (
