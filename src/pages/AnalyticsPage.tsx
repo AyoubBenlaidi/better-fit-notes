@@ -3,11 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, CartesianGrid,
+  ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell,
 } from 'recharts';
 import { format, subDays } from 'date-fns';
 import { Header } from '@/components/layout/Header';
-import { Badge } from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Spinner';
 import { useDebounce } from '@/lib/useDebounce';
 import { Search, Trophy, TrendingUp, Calendar, Activity } from 'lucide-react';
@@ -21,7 +20,6 @@ import { useAuthStore } from '@/stores/authStore';
 import {
   getSessions, getMuscleGroups, getExercises,
   getAnalyticsData, getSessionExercisesInRange,
-  getSessionIdsWithExercises,
   getPersonalRecords, getExerciseChartData,
   getSessionStats, getVolumeStats,
 } from '@/lib/api';
@@ -129,16 +127,8 @@ function OverviewTab() {
   const { data: muscleGroups } = useQuery({ queryKey: ['muscleGroups', user?.id], queryFn: () => getMuscleGroups(user!.id), enabled: !!user, staleTime: Infinity });
   const { data: allExercises } = useQuery({ queryKey: ['exercises', user?.id], queryFn: () => getExercises(user!.id), enabled: !!user, staleTime: Infinity });
 
-  // Lightweight query: which sessions have at least one exercise (for accurate counts)
-  const { data: activeSessionIds } = useQuery({
-    queryKey: ['activeSessionIds', user?.id],
-    queryFn: () => getSessionIdsWithExercises(user!.id),
-    enabled: !!user,
-    staleTime: 5 * 60 * 1000,
-  });
-
   // SEs + sets scoped to selected period — re-fetches only when period changes
-  const { data: analyticsData } = useQuery({
+  const { data: analyticsData, isLoading: analyticsLoading } = useQuery({
     queryKey: ['analyticsData', user?.id, pStart, pEnd],
     queryFn: () => getAnalyticsData(user!.id, pStart, pEnd),
     enabled: !!user,
@@ -159,9 +149,8 @@ function OverviewTab() {
 
   const weeklyData = useMemo(() => {
     if (!sessions || !analyticsData || !allExercises) return [];
-    const activeIds = activeSessionIds ? new Set(activeSessionIds) : undefined;
-    return getWeeklyBreakdown(sessions, analyticsData.sessionExercises, analyticsData.sets, allExercises, periodType, activeIds);
-  }, [sessions, analyticsData, allExercises, periodType, activeSessionIds]);
+    return getWeeklyBreakdown(sessions, analyticsData.sessionExercises, analyticsData.sets, allExercises, periodType);
+  }, [sessions, analyticsData, allExercises, periodType]);
 
   // Use API-fetched volume for the selected period instead of calculating locally
   const totalVolume = periodVolumeStats?.volume ?? 0;
@@ -211,7 +200,9 @@ function OverviewTab() {
       </div>
 
       <ChartCard title={`Volume Breakdown (${periodConfig.label})`}>
-        {weeklyData.every((d) => d.volume === 0) ? (
+        {analyticsLoading ? (
+          <div className="flex justify-center py-6"><Spinner variant="default" size="sm" /></div>
+        ) : weeklyData.every((d) => d.volume === 0) ? (
           <p className="text-sm text-text-secondary text-center py-6">No data yet</p>
         ) : (
           <ResponsiveContainer width="100%" height={160}>
@@ -255,20 +246,42 @@ function OverviewTab() {
             ))}
           </div>
           <ChartCard title={`Muscle Focus (${getPeriodConfig(musclePeriodType).label})`}>
-            <div className="flex flex-col gap-3">
-              {muscleDistribution.slice(0, 6).map(({ mg, count }) => {
-                const max = muscleDistribution[0].count;
-                return (
-                  <div key={mg.id} className="flex items-center gap-3">
-                    <Badge color={mg.color} className="text-[10px] w-24 flex-shrink-0 justify-start">{mg.name}</Badge>
-                    <div className="flex-1 h-1.5 bg-surface-raised rounded-full overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-slow" style={{ width: `${(count / max) * 100}%`, backgroundColor: mg.color }} />
+            {muscleDistribution.length > 0 ? (
+              <div className="flex flex-col gap-4">
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie
+                      data={muscleDistribution.slice(0, 6)}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={80}
+                      paddingAngle={2}
+                      dataKey="count"
+                    >
+                      {muscleDistribution.slice(0, 6).map(({ mg }) => (
+                        <Cell key={`cell-${mg.id}`} fill={mg.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(value, _name, entry) => [value, (entry.payload as { mg?: { name?: string } }).mg?.name ?? '']}
+                      contentStyle={tooltipStyle}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="grid grid-cols-2 gap-2">
+                  {muscleDistribution.slice(0, 6).map(({ mg, count }) => (
+                    <div key={mg.id} className="flex items-center gap-2 text-xs">
+                      <div className="h-3 w-3 rounded-full flex-shrink-0" style={{ backgroundColor: mg.color }} />
+                      <span className="text-text-primary font-medium truncate">{mg.name}</span>
+                      <span className="text-text-muted font-mono flex-shrink-0">{count}</span>
                     </div>
-                    <span className="text-xs text-text-muted font-mono w-5 text-right flex-shrink-0">{count}</span>
-                  </div>
-                );
-              })}
-            </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-text-secondary text-center py-6">No data yet</p>
+            )}
           </ChartCard>
         </div>
       )}

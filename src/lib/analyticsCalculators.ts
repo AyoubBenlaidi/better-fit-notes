@@ -1,7 +1,7 @@
 import {
-  subMonths, startOfWeek, endOfWeek, format,
-  eachWeekOfInterval, eachDayOfInterval, eachMonthOfInterval,
-  startOfMonth, endOfMonth,
+  subMonths, startOfWeek, endOfWeek, addDays, format,
+  eachDayOfInterval, eachMonthOfInterval, eachYearOfInterval,
+  startOfMonth, endOfMonth, endOfYear, startOfYear,
 } from 'date-fns';
 import type { Session, WorkoutSet, SessionExercise, Exercise } from '@/types/entities';
 
@@ -103,12 +103,12 @@ export function getWeeklyBreakdown(
   sets: WorkoutSet[],
   exercises: Exercise[],
   periodType: PeriodType,
-  activeSessionIds?: Set<string>,
 ): { week: string; volume: number; date: Date; sessions: number }[] {
   const config = getPeriodConfig(periodType);
 
   const exercisesByType = new Map(exercises.map((e) => [e.id, e.type]));
   const seMap = new Map(sessionExercises.map((se) => [se.id, se]));
+  const sessionsMap = new Map(sessions.map((s) => [s.id, s]));
 
   // Build intervals with [start, end, label] based on granularity
   type Interval = { start: Date; end: Date; label: string };
@@ -121,31 +121,58 @@ export function getWeeklyBreakdown(
       end: day,
       label: format(day, 'EEE'), // Mon, Tue, …
     }));
-  } else if (periodType === 'year' || periodType === 'alltime') {
-    // Monthly bars
-    intervals = eachMonthOfInterval({ start: config.startDate, end: config.endDate }).map((month) => ({
+  } else if (periodType === 'year') {
+    // Monthly bars: Jan → Dec (all 12, even if future months are empty)
+    const yearStart = startOfYear(config.startDate);
+    const yearEnd = endOfYear(config.startDate);
+    intervals = eachMonthOfInterval({ start: yearStart, end: yearEnd }).map((month) => ({
       start: month,
       end: endOfMonth(month),
       label: format(month, 'MMM'),
     }));
-  } else {
-    // Weekly bars (month, 3months)
-    intervals = eachWeekOfInterval(
-      { start: config.startDate, end: config.endDate },
-      { weekStartsOn: 1 },
-    ).map((weekStart) => ({
-      start: weekStart,
-      end: endOfWeek(weekStart, { weekStartsOn: 1 }),
-      label: format(weekStart, 'MMM d'),
+  } else if (periodType === 'alltime') {
+    // Yearly bars — start from the first session year, not hardcoded 2000
+    const firstSession = sessions.reduce<Date | null>((min, s) => {
+      const d = new Date(s.date + 'T00:00:00');
+      return min === null || d < min ? d : min;
+    }, null);
+    const rangeStart = firstSession ? startOfYear(firstSession) : startOfYear(config.endDate);
+    intervals = eachYearOfInterval({ start: rangeStart, end: config.endDate }).map((year) => ({
+      start: year,
+      end: endOfYear(year),
+      label: format(year, 'yyyy'),
     }));
+  } else {
+    // Weekly bars (month, 3months): aligned to period start to avoid overhang
+    // Overhang example: period starts Apr 1 (Wed) → eachWeekOfInterval returns Mar 30 (Mon)
+    // → first bar labeled "Mar 30" but only shows Apr 1-5 data (misleading)
+    intervals = [];
+    let cur = config.startDate;
+    while (cur <= config.endDate) {
+      intervals.push({
+        start: cur,
+        end: addDays(cur, 6),
+        label: format(cur, 'MMM d'),
+      });
+      cur = addDays(cur, 7);
+    }
   }
 
   return intervals.map(({ start, end, label }) => {
     const ws = format(start, 'yyyy-MM-dd');
     const we = format(end, 'yyyy-MM-dd');
 
+    // Determine which sessions have SEs in this period (don't use activeSessionIds)
+    const sessionIdsWithSE = new Set<string>();
+    for (const se of sessionExercises) {
+      const session = sessionsMap.get(se.sessionId);
+      if (session && session.date >= ws && session.date <= we) {
+        sessionIdsWithSE.add(se.sessionId);
+      }
+    }
+
     const slotSessions = sessions.filter(
-      (s) => s.date >= ws && s.date <= we && (!activeSessionIds || activeSessionIds.has(s.id)),
+      (s) => s.date >= ws && s.date <= we && sessionIdsWithSE.has(s.id),
     );
     const slotSessionIds = new Set(slotSessions.map((s) => s.id));
     const slotSEIds = new Set(

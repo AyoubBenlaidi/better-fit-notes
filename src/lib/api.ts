@@ -100,11 +100,19 @@ export async function deleteExercise(id: string): Promise<void> {
 
 /** Returns the array of session IDs that have at least one exercise — lightweight for analytics counts */
 export async function getSessionIdsWithExercises(userId: string): Promise<string[]> {
-  const { data, error } = await sb()
-    .from('session_exercises').select('session_id').eq('user_id', userId);
-  if (error) throw error;
-  // Return as array instead of Set for JSON serialization in React Query cache
-  const ids = new Set((data ?? []).map((r) => r.session_id as string));
+  const PAGE = 1000;
+  const ids = new Set<string>();
+  let offset = 0;
+  while (true) {
+    const { data, error } = await sb()
+      .from('session_exercises').select('session_id').eq('user_id', userId)
+      .range(offset, offset + PAGE - 1);
+    if (error) throw error;
+    if (!data?.length) break;
+    for (const r of data) ids.add(r.session_id as string);
+    if (data.length < PAGE) break;
+    offset += PAGE;
+  }
   return Array.from(ids);
 }
 
@@ -340,7 +348,7 @@ export async function getAnalyticsData(
 
   const sessionExercises = (await Promise.all(
     chunks(sessData.map((r) => r.id as string), 100).map((chunk) =>
-      sb().from('session_exercises').select('*').in('session_id', chunk)
+      sb().from('session_exercises').select('*').eq('user_id', userId).in('session_id', chunk)
         .then(({ data, error }) => {
           if (error) throw error;
           return (data ?? []).map((r) => parseRow<SessionExercise>(r));
@@ -352,7 +360,7 @@ export async function getAnalyticsData(
 
   const sets = (await Promise.all(
     chunks(sessionExercises.map((se) => se.id), 100).map((chunk) =>
-      sb().from('sets').select('*').in('session_exercise_id', chunk)
+      sb().from('sets').select('*').eq('user_id', userId).in('session_exercise_id', chunk)
         .then(({ data, error }) => {
           if (error) throw error;
           return (data ?? []).map((r) => parseRow<WorkoutSet>(r));
