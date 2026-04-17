@@ -9,7 +9,7 @@ disableServiceWorker();
 reloadDiscardedPage();
 
 function reloadDiscardedPage() {
-  const handlePageShow = (event: PageTransitionEvent) => {
+  const handlePageShow = (_event: PageTransitionEvent) => {
     const wasDiscarded = 'wasDiscarded' in document
       ? Boolean((document as Document & { wasDiscarded?: boolean }).wasDiscarded)
       : false;
