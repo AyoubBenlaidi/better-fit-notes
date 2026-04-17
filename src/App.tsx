@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, focusManager, onlineManager } from '@tanstack/react-query';
 import { AppShell } from '@/components/layout/AppShell';
 import { CalendarPage } from '@/pages/CalendarPage';
 import { ExercisesPage } from '@/pages/ExercisesPage';
@@ -23,6 +23,70 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+function QueryLifecycleManager() {
+  useEffect(() => {
+    function syncOnlineState() {
+      onlineManager.setOnline(window.navigator.onLine);
+    }
+
+    function syncFocusState() {
+      focusManager.setFocused(document.visibilityState === 'visible');
+    }
+
+    async function recoverInteractiveState() {
+      syncOnlineState();
+      syncFocusState();
+
+      if (!window.navigator.onLine || document.visibilityState !== 'visible') {
+        return;
+      }
+
+      await queryClient.resumePausedMutations();
+      await queryClient.refetchQueries({ type: 'active' });
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        void recoverInteractiveState();
+        return;
+      }
+
+      syncFocusState();
+    }
+
+    function handleWindowFocus() {
+      void recoverInteractiveState();
+    }
+
+    function handleOnline() {
+      void recoverInteractiveState();
+    }
+
+    function handleOffline() {
+      syncOnlineState();
+    }
+
+    syncOnlineState();
+    syncFocusState();
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('pageshow', handleWindowFocus);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('pageshow', handleWindowFocus);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  return null;
+}
 
 function applyTheme(theme: 'dark' | 'light' | 'system') {
   const root = document.documentElement;
@@ -91,6 +155,7 @@ function AppRoutes() {
 function AppContent() {
   return (
     <BrowserRouter>
+      <QueryLifecycleManager />
       <ThemeManager />
       <AppRoutes />
     </BrowserRouter>

@@ -6,6 +6,21 @@ import { cleanupLegacyClientStorage, disableServiceWorker } from './lib/register
 
 cleanupLegacyClientStorage();
 disableServiceWorker();
+reloadDiscardedPage();
+
+function reloadDiscardedPage() {
+  const handlePageShow = (event: PageTransitionEvent) => {
+    const wasDiscarded = 'wasDiscarded' in document
+      ? Boolean((document as Document & { wasDiscarded?: boolean }).wasDiscarded)
+      : false;
+
+    if (event.persisted || wasDiscarded) {
+      window.location.reload();
+    }
+  };
+
+  window.addEventListener('pageshow', handlePageShow, { once: true });
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
