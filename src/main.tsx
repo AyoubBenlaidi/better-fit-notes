@@ -14,7 +14,7 @@ function reloadDiscardedPage() {
       ? Boolean((document as Document & { wasDiscarded?: boolean }).wasDiscarded)
       : false;
 
-    if (event.persisted || wasDiscarded) {
+    if (wasDiscarded) {
       window.location.reload();
     }
   };
