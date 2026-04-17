@@ -49,9 +49,11 @@ export function useAuthInit() {
 
     syncInFlightRef.current = true;
 
-    // Keep a lightweight interaction lock during boot/foreground recovery so
-    // the UI cannot be tapped against stale query data before refetch settles.
-    if (options?.foregroundRecovery || options?.forceRefresh) {
+    // Keep a lightweight interaction lock only during foreground recovery.
+    // A hard reload already rebuilds the screen through normal route/page
+    // loading states; the lock is specifically meant to cover the brief window
+    // where a resumed screen is visible before its active queries settle again.
+    if (options?.foregroundRecovery) {
       setRefreshLock(true);
     }
 

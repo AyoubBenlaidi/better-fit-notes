@@ -21,7 +21,7 @@ The application is connected-first. It does not support offline mode anymore.
 - `settingsStore` is the only Zustand store persisted to `localStorage`
 - Supabase manages its own auth session in browser storage
 - Service workers are actively disabled and cleaned up on startup
-- During a hard refresh or app resume, a small interaction lock stays visible until active queries settle
+- During app resume after background/lock, a small interaction lock stays visible until active queries settle
 
 This is intentional. Previous local cache and pseudo-offline behavior caused stale refreshes, inconsistent navigation and leftover client state across deployments.
 
@@ -104,7 +104,7 @@ The Vite dev server runs on port `3000`.
 
 - Auth recovery always validates the current Supabase session before trusting browser state
 - Startup and foreground recovery refetch active queries instead of reviving a persisted client cache
-- A subtle loader temporarily blocks taps while those refresh queries are still in flight
+- A subtle loader temporarily blocks taps during foreground recovery while those refresh queries are still in flight
 - Session pages only reload the metadata required by the current session, which avoids depending on a full catalog cache after reload
 
 ## Data Flow

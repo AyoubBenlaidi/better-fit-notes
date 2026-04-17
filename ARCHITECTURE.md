@@ -63,7 +63,7 @@ Feature logic lives in `domains/*`, page composition lives in `pages/*`, and raw
 3. Old service workers are unregistered and browser caches are cleared.
 4. React mounts `App`.
 5. `useAuthInit()` restores the Supabase session.
-6. A lightweight refresh lock stays active until the first visible queries settle.
+6. On foreground recovery, a lightweight refresh lock stays active until the first visible queries settle.
 7. Protected routes render only after auth loading resolves.
 
 ### Data Flow
