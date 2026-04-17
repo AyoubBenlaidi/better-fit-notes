@@ -19,7 +19,12 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 1000 * 60 * 5,
       gcTime: 1000 * 60 * 60 * 24, // Keep cache for 24h
+      networkMode: 'always',
       retry: 1,
+    },
+    mutations: {
+      networkMode: 'always',
+      retry: 0,
     },
   },
 });
@@ -101,7 +106,7 @@ function QueryLifecycleManager() {
       syncOnlineState();
       syncFocusState();
 
-      if (!window.navigator.onLine || document.visibilityState !== 'visible') {
+      if (document.visibilityState !== 'visible') {
         return;
       }
 

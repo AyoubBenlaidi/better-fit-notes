@@ -111,10 +111,10 @@ export function SessionPage() {
   const existingExerciseIds = sessionExercises?.map((se) => se.exerciseId) ?? [];
 
   const isPageLoading =
-    sessionQuery.isPending ||
-    sessionExercisesQuery.isPending ||
-    exercisesQuery.isPending ||
-    muscleGroupsQuery.isPending;
+    (sessionQuery.fetchStatus === 'fetching' && !sessionQuery.data && !sessionQuery.error) ||
+    (sessionExercisesQuery.fetchStatus === 'fetching' && !sessionExercisesQuery.data && !sessionExercisesQuery.error) ||
+    (exercisesQuery.fetchStatus === 'fetching' && !exercisesQuery.data && !exercisesQuery.error) ||
+    (muscleGroupsQuery.fetchStatus === 'fetching' && !muscleGroupsQuery.data && !muscleGroupsQuery.error);
 
   const pageError =
     sessionQuery.error ||
