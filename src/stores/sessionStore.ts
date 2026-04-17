@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 
 interface SessionStoreState {
   activeSessionId: string | null;
@@ -8,26 +7,20 @@ interface SessionStoreState {
   restTimerActive: boolean;
   startRestTimer: (seconds: number) => void;
   stopRestTimer: () => void;
-  _hydrated: boolean;
+  reset: () => void;
 }
 
-export const useSessionStore = create<SessionStoreState>()(
-  persist(
-    (set) => ({
+export const useSessionStore = create<SessionStoreState>()((set) => ({
+  activeSessionId: null,
+  setActiveSessionId: (id) => set({ activeSessionId: id }),
+  restTimerSeconds: 90,
+  restTimerActive: false,
+  startRestTimer: (seconds) => set({ restTimerSeconds: seconds, restTimerActive: true }),
+  stopRestTimer: () => set({ restTimerActive: false }),
+  reset: () =>
+    set({
       activeSessionId: null,
-      setActiveSessionId: (id) => set({ activeSessionId: id }),
       restTimerSeconds: 90,
       restTimerActive: false,
-      startRestTimer: (seconds) => set({ restTimerSeconds: seconds, restTimerActive: true }),
-      stopRestTimer: () => set({ restTimerActive: false }),
-      _hydrated: false,
     }),
-    {
-      name: 'bfn-session-store',
-      partialize: (state) => ({ activeSessionId: state.activeSessionId, restTimerSeconds: state.restTimerSeconds }),
-      onRehydrateStorage: () => (state) => {
-        if (state) state._hydrated = true;
-      },
-    }
-  )
-);
+}));

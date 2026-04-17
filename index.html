@@ -10,14 +10,18 @@
     <meta name="apple-mobile-web-app-title" content="BFN" />
     <meta name="description" content="Better Fit Notes — Mobile-first workout tracker" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="manifest" href="/manifest.json" />
     <title>Better Fit Notes</title>
     <script>
       // Apply theme before render to prevent flash
       (function () {
-        var s = localStorage.getItem('bfn-settings');
         var theme = 'dark';
-        try { theme = JSON.parse(s).state.settings.theme || 'dark'; } catch (_) {}
+        try {
+          var stored = window.localStorage.getItem('bfn-settings');
+          if (stored) {
+            var parsed = JSON.parse(stored);
+            theme = parsed && parsed.state && parsed.state.settings && parsed.state.settings.theme || 'dark';
+          }
+        } catch (_) {}
         var dark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
         var root = document.documentElement;
         root.classList.add(dark ? 'dark' : 'light');

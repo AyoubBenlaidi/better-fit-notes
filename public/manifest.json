@@ -1,7 +1,7 @@
 {
   "name": "Better Fit Notes",
   "short_name": "BFN",
-  "description": "Mobile-first workout tracker — local-first, offline capable",
+  "description": "Mobile-first workout tracker with live sync",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0F0F0F",

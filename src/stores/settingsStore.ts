@@ -5,7 +5,7 @@ import type { UserSettings } from '@/types/entities';
 interface SettingsState {
   settings: UserSettings;
   updateSettings: (partial: Partial<UserSettings>) => void;
-  _hydrated: boolean;
+  resetSettings: () => void;
 }
 
 const defaultSettings: UserSettings = {
@@ -22,14 +22,11 @@ export const useSettingsStore = create<SettingsState>()(
       settings: defaultSettings,
       updateSettings: (partial) =>
         set((state) => ({ settings: { ...state.settings, ...partial } })),
-      _hydrated: false,
+      resetSettings: () => set({ settings: defaultSettings }),
     }),
     {
       name: 'bfn-settings',
       partialize: (state) => ({ settings: state.settings }),
-      onRehydrateStorage: () => (state) => {
-        if (state) state._hydrated = true;
-      },
     }
   )
 );

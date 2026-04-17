@@ -24,6 +24,7 @@ export function useAuthInit() {
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) {
+      setUser(null);
       setLoading(false);
       return;
     }
@@ -114,11 +115,23 @@ export async function signOut() {
   // Clear Supabase session
   await supabase.auth.signOut();
   
-  // Clear localStorage to ensure complete cleanup
-  const keys = Object.keys(localStorage).filter(key => 
-    key.startsWith('sb-') || key === 'auth' || key === 'supabase'
-  );
-  keys.forEach(key => localStorage.removeItem(key));
+  // Clear local storage leftovers from previous app versions.
+  try {
+    const keys = Object.keys(localStorage).filter(
+      (key) =>
+        key.startsWith('sb-') ||
+        key === 'auth' ||
+        key === 'supabase' ||
+        key === 'bfn-auth-store' ||
+        key === 'bfn-query-cache' ||
+        key === 'bfn-session-store' ||
+        key === 'bfn-settings',
+    );
+
+    keys.forEach((key) => localStorage.removeItem(key));
+  } catch (error) {
+    console.warn('[Auth] Failed to clear local storage during sign out', error);
+  }
 }
 
 export async function resetPassword(email: string) {

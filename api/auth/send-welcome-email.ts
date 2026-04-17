@@ -71,7 +71,7 @@ async function sendWelcomeEmail(userEmail: string, userName?: string) {
         <li style="margin: 8px 0;"><strong>📊 Suivre tes séances</strong> — Enregistre chaque exercice et série</li>
         <li style="margin: 8px 0;"><strong>📈 Analyser tes performances</strong> — Vois ton progrès au fil du temps</li>
         <li style="margin: 8px 0;"><strong>🎯 Gérer tes objectifs</strong> — Crée des templates et des records personnels</li>
-        <li style="margin: 8px 0;"><strong>📱 Accès complet offline</strong> — Entraîne-toi sans connexion internet</li>
+        <li style="margin: 8px 0;"><strong>📱 Synchronisation en direct</strong> — Retrouve tes séances à jour sur tous tes appareils</li>
       </ul>
 
       <p style="font-size: 16px;">C'est parti! 🚀</p>

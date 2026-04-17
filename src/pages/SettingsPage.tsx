@@ -15,8 +15,8 @@ import { parseCSV, validateCSV, importCSVData } from '@/lib/csvParser';
 import { upsertSettings, getExercises, getSessions, getAllSessionExercises, getAllSets, getTemplates, getPersonalRecords, getMuscleGroups } from '@/lib/api';
 
 export function SettingsPage() {
-  const { settings, updateSettings } = useSettingsStore();
-  const { user } = useAuthStore();
+  const { settings, updateSettings, resetSettings } = useSettingsStore();
+  const { user, reset: resetAuth } = useAuthStore();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [importingCSV, setImportingCSV] = useState(false);
@@ -158,26 +158,14 @@ export function SettingsPage() {
   }
 
   async function handleSignOut() {
-    // Clear stores
-    useAuthStore.setState({ user: null });
-    useSessionStore.setState({ activeSessionId: null });
-    useSettingsStore.setState({
-      settings: {
-        id: 'user-settings',
-        weightUnit: 'kg',
-        dateFormat: 'DD/MM/YYYY',
-        theme: 'dark',
-        firstDayOfWeek: 1,
-      },
-    });
+    resetAuth();
+    useSessionStore.getState().reset();
+    resetSettings();
     
-    // Clear React Query cache
     queryClient.clear();
     
-    // Sign out from Supabase
     await signOut();
     
-    // Redirect to auth page
     toast('Signed out', 'info');
     navigate('/auth', { replace: true });
   }

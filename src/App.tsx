@@ -1,8 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { QueryClient, useQueryClient } from '@tanstack/react-query';
-import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
-import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppShell } from '@/components/layout/AppShell';
 import { CalendarPage } from '@/pages/CalendarPage';
 import { ExercisesPage } from '@/pages/ExercisesPage';
@@ -15,8 +13,6 @@ import { AuthPage } from '@/pages/AuthPage';
 import { useAuthInit } from '@/domains/auth/hooks/useAuth';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useAuthStore } from '@/stores/authStore';
-import { useStoresHydrated } from '@/lib/useHydrateStore';
-import { isSupabaseConfigured } from '@/lib/supabase';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -26,11 +22,6 @@ const queryClient = new QueryClient({
       retry: 1,
     },
   },
-});
-
-const localStoragePersister = createSyncStoragePersister({
-  storage: window.localStorage,
-  key: 'bfn-query-cache',
 });
 
 function applyTheme(theme: 'dark' | 'light' | 'system') {
@@ -63,7 +54,6 @@ function ThemeManager() {
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuthStore();
 
-  if (!isSupabaseConfigured) return <>{children}</>;
   if (isLoading) return (
     <div className="flex items-center justify-center min-h-dvh bg-surface-base">
       <div className="h-2 w-2 rounded-full bg-accent animate-bounce" />
@@ -99,28 +89,6 @@ function AppRoutes() {
 }
 
 function AppContent() {
-  const storesHydrated = useStoresHydrated();
-  const { user } = useAuthStore();
-  const queryClient = useQueryClient();
-
-  // Force refetch all main queries after stores are hydrated AND user is available
-  useEffect(() => {
-    if (storesHydrated && user) {
-      console.log('[App] Rehydrated + user available, refetching all queries...');
-      // Refetch all queries to ensure fresh data after hydration
-      queryClient.refetchQueries();
-    }
-  }, [storesHydrated, user?.id, queryClient]);
-
-  // Wait for stores to rehydrate before rendering routes
-  if (!storesHydrated) {
-    return (
-      <div className="flex items-center justify-center min-h-dvh bg-surface-base">
-        <div className="h-2 w-2 rounded-full bg-accent animate-bounce" />
-      </div>
-    );
-  }
-
   return (
     <BrowserRouter>
       <ThemeManager />
@@ -131,14 +99,8 @@ function AppContent() {
 
 export default function App() {
   return (
-    <PersistQueryClientProvider
-      client={queryClient}
-      persistOptions={{
-        persister: localStoragePersister,
-        maxAge: 1000 * 60 * 60 * 24, // Reuse cache for 24h
-      }}
-    >
+    <QueryClientProvider client={queryClient}>
       <AppContent />
-    </PersistQueryClientProvider>
+    </QueryClientProvider>
   );
 }

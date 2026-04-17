@@ -1,28 +1,39 @@
-export function registerServiceWorker() {
-  // Never run the SW in dev — Vite's dev server and a caching SW are incompatible.
-  // The SW would serve stale cached files instead of Vite's freshly transformed modules,
-  // causing the app to load an outdated module graph and render a blank page on refresh.
-  if (!import.meta.env.PROD) return;
+const LEGACY_STORAGE_KEYS = ['bfn-auth-store', 'bfn-query-cache', 'bfn-session-store'];
 
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker
-        .register('/sw.js', { updateViaCache: 'none' })
-        .then((reg) => {
-          console.log('[SW] Registered', reg.scope);
-          
-          // Check for updates immediately and every 10 seconds
-          reg.update();
-          setInterval(() => reg.update(), 10000);
-          
-          // Listen for controller change (new SW activated)
-          navigator.serviceWorker.addEventListener('controllerchange', () => {
-            console.log('[SW] Controller changed - new version activated');
-          });
-        })
-        .catch((err) => {
-          console.warn('[SW] Registration failed', err);
-        });
-    });
+export function cleanupLegacyClientStorage() {
+  try {
+    for (const key of LEGACY_STORAGE_KEYS) {
+      window.localStorage.removeItem(key);
+    }
+  } catch (error) {
+    console.warn('[Client] Failed to clear legacy local storage', error);
+  }
+}
+
+export function disableServiceWorker() {
+  if (typeof window === 'undefined') return;
+
+  window.addEventListener(
+    'load',
+    () => {
+      void teardownServiceWorkers();
+    },
+    { once: true },
+  );
+}
+
+async function teardownServiceWorkers() {
+  try {
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.allSettled(registrations.map((registration) => registration.unregister()));
+    }
+
+    if ('caches' in window) {
+      const cacheNames = await window.caches.keys();
+      await Promise.allSettled(cacheNames.map((cacheName) => window.caches.delete(cacheName)));
+    }
+  } catch (error) {
+    console.warn('[SW] Failed to disable service worker cleanly', error);
   }
 }

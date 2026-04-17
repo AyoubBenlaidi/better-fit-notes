@@ -54,7 +54,7 @@ export function AuthPage() {
           </div>
           <h1 className="text-2xl font-bold text-text-primary">Better Fit Notes</h1>
           <p className="text-sm text-text-secondary text-center">
-            Auth is disabled — Supabase is not configured. The app works fully offline.
+            Supabase is not configured. The application requires the backend to load.
           </p>
         </div>
       </div>
