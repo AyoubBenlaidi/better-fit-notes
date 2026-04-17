@@ -2,6 +2,8 @@ const LEGACY_STORAGE_KEYS = ['bfn-auth-store', 'bfn-query-cache', 'bfn-session-s
 
 export function cleanupLegacyClientStorage() {
   try {
+    // These keys belonged to the old persisted cache/offline flow. They must be
+    // removed on every boot so a redeploy cannot revive stale client state.
     for (const key of LEGACY_STORAGE_KEYS) {
       window.localStorage.removeItem(key);
     }
@@ -30,6 +32,8 @@ async function teardownServiceWorkers() {
     }
 
     if ('caches' in window) {
+      // Browser Cache Storage is cleared for the same reason: no runtime cache
+      // should survive from the retired offline/PWA implementation.
       const cacheNames = await window.caches.keys();
       await Promise.allSettled(cacheNames.map((cacheName) => window.caches.delete(cacheName)));
     }

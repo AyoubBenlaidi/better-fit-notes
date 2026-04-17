@@ -47,6 +47,8 @@ export function SessionPage() {
     queryKey: ['sessionMetadata', user?.id, id, exerciseIdsKey],
     queryFn: async () => {
       const exerciseIds = (sessionExercises ?? []).map((se) => se.exerciseId);
+      // After a hard refresh we only reload the metadata required by the
+      // current session instead of depending on the whole exercise catalog.
       const exercises = await getExercisesByIds(user!.id, exerciseIds);
       const muscleGroupIds = exercises.map((exercise) => exercise.muscleGroupId);
       const muscleGroups = await getMuscleGroupsByIds(user!.id, muscleGroupIds);
@@ -68,7 +70,8 @@ export function SessionPage() {
     [muscleGroups],
   );
 
-  // Use the same ['sets', seId] keys as ExerciseBlock — cache is shared, invalidations propagate automatically
+  // Keep the same user-scoped cache keys as the session hooks so refresh and
+  // invalidation stay consistent across SessionPage, CalendarPage and mutations.
   const setQueries = useQueries({
     queries: (sessionExercises ?? []).map((se) => ({
       queryKey: ['sets', user?.id, se.id],

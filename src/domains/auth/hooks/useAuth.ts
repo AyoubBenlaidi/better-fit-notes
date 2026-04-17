@@ -5,6 +5,8 @@ import { useAuthStore } from '@/stores/authStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { getSettings, seedLibrary, getMuscleGroups } from '@/lib/api';
 
+// These keys represent legacy app-managed auth/cache state. If one of them
+// becomes invalid, we clear all of them together to avoid half-hydrated clients.
 const AUTH_STORAGE_KEYS = ['auth', 'supabase', 'bfn-auth-store', 'bfn-query-cache', 'bfn-session-store'];
 
 async function setupUserData(userId: string, updateSettings: (p: Partial<any>) => void) {
@@ -23,6 +25,8 @@ async function setupUserData(userId: string, updateSettings: (p: Partial<any>) =
 
 function clearAuthBrowserStorage() {
   try {
+    // Supabase owns its session keys, but when a stored session is invalid we
+    // must clear both Supabase keys and legacy Better Fit Notes keys together.
     const keys = Object.keys(localStorage).filter(
       (key) => key.startsWith('sb-') || AUTH_STORAGE_KEYS.includes(key),
     );
@@ -34,7 +38,7 @@ function clearAuthBrowserStorage() {
 }
 
 export function useAuthInit() {
-  const { setUser, setLoading } = useAuthStore();
+  const { setUser, setLoading, setRefreshLock } = useAuthStore();
   const { updateSettings } = useSettingsStore();
   const queryClient = useQueryClient();
   const syncInFlightRef = useRef(false);
@@ -44,6 +48,12 @@ export function useAuthInit() {
     if (!isSupabaseConfigured || !supabase || syncInFlightRef.current) return;
 
     syncInFlightRef.current = true;
+
+    // Keep a lightweight interaction lock during boot/foreground recovery so
+    // the UI cannot be tapped against stale query data before refetch settles.
+    if (options?.foregroundRecovery || options?.forceRefresh) {
+      setRefreshLock(true);
+    }
 
     // Only show the full-screen loading indicator if we don't have a user yet
     // (first load). During foreground recovery the current page stays visible
@@ -70,6 +80,7 @@ export function useAuthInit() {
         }
 
         setUser(null);
+        setRefreshLock(false);
         queryClient.clear();
         return;
       }
@@ -77,6 +88,9 @@ export function useAuthInit() {
       let validatedSession = session;
 
       if (options?.foregroundRecovery || options?.forceRefresh) {
+        // Never trust a restored browser session blindly after refresh/resume.
+        // We ask Supabase for a fresh session so React Query rebuilds from the
+        // current credentials, not from a stale local token snapshot.
         const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
 
         if (refreshError) {
@@ -93,6 +107,7 @@ export function useAuthInit() {
         console.warn('[Auth] Stored session is no longer valid', userError?.message ?? 'Missing user');
         clearAuthBrowserStorage();
         setUser(null);
+        setRefreshLock(false);
         queryClient.clear();
         return;
       }
@@ -122,6 +137,7 @@ export function useAuthInit() {
     if (!isSupabaseConfigured || !supabase) {
       setUser(null);
       setLoading(false);
+      setRefreshLock(false);
       return;
     }
 
@@ -169,6 +185,7 @@ export function useAuthInit() {
         queryClient.clear();
         setUser(null);
         setLoading(false);
+        setRefreshLock(false);
       }
     });
 
@@ -182,7 +199,7 @@ export function useAuthInit() {
       window.removeEventListener('pageshow', recoverFromBackground);
       window.removeEventListener('online', handleOnline);
     };
-  }, [queryClient, setLoading, setUser, syncSession]);
+  }, [queryClient, setLoading, setRefreshLock, setUser, syncSession]);
 }
 
 export async function signIn(email: string, password: string) {

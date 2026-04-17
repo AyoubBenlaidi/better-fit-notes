@@ -63,7 +63,8 @@ Feature logic lives in `domains/*`, page composition lives in `pages/*`, and raw
 3. Old service workers are unregistered and browser caches are cleared.
 4. React mounts `App`.
 5. `useAuthInit()` restores the Supabase session.
-6. Protected routes render only after auth loading resolves.
+6. A lightweight refresh lock stays active until the first visible queries settle.
+7. Protected routes render only after auth loading resolves.
 
 ### Data Flow
 
@@ -120,6 +121,7 @@ All main routes are wrapped in `RequireAuth`.
 - Default retry count is 1
 - Cache is not persisted across reloads
 - Mutations rely on targeted invalidation rather than global refetch on startup
+- Foreground recovery refetches active queries and temporarily blocks taps until they settle
 
 This is important for correctness: refresh should rebuild state from Supabase, not from old local cache.
 
@@ -154,7 +156,7 @@ Flow:
 
 1. User signs in, signs up, requests a magic link or resets a password in `AuthPage`
 2. Supabase stores and refreshes the session token
-3. `useAuthInit()` loads the current session on app startup
+3. `useAuthInit()` loads and validates the current session on app startup
 4. Zustand mirrors the resolved auth user for routing and UI
 5. On sign out, local leftovers are cleared and query cache is reset
 
@@ -213,6 +215,7 @@ Keep these rules intact unless you are intentionally redesigning the architectur
 
 - Do not persist React Query cache
 - Do not persist auth or session Zustand stores
+- Keep the boot/foreground interaction lock tied to real query recovery, not a fixed timeout alone
 - Do not add offline fallback text or behavior without rebuilding the full data model around it
 
 ### If You Add New Data Fetching

@@ -1,6 +1,6 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { QueryClient, QueryClientProvider, focusManager, onlineManager } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, focusManager, onlineManager, useIsFetching } from '@tanstack/react-query';
 import { AppShell } from '@/components/layout/AppShell';
 import { CalendarPage } from '@/pages/CalendarPage';
 import { ExercisesPage } from '@/pages/ExercisesPage';
@@ -13,10 +13,13 @@ import { AuthPage } from '@/pages/AuthPage';
 import { useAuthInit } from '@/domains/auth/hooks/useAuth';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useAuthStore } from '@/stores/authStore';
+import { Spinner } from '@/components/ui/Spinner';
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
+      // Server state is intentionally memory-only. After a full reload, queries
+      // must rebuild from the network instead of reviving a persisted snapshot.
       staleTime: 1000 * 60 * 5,
       gcTime: 1000 * 60 * 60 * 24, // Keep cache for 24h
       networkMode: 'always',
@@ -87,6 +90,8 @@ function QueryLifecycleManager() {
         return;
       }
 
+      // When the app comes back to the foreground, replay any paused work and
+      // refresh active screens so they can rebuild from fresh server state.
       await queryClient.resumePausedMutations();
       await queryClient.refetchQueries({ type: 'active' });
     }
@@ -131,6 +136,55 @@ function QueryLifecycleManager() {
   }, []);
 
   return null;
+}
+
+function RefreshInteractionGuard() {
+  const { user, isLoading, isRefreshLockActive, setRefreshLock } = useAuthStore();
+  const isFetching = useIsFetching();
+  const [isVisible, setIsVisible] = useState(false);
+  const lockStartedAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!isRefreshLockActive || !user || isLoading) {
+      setIsVisible(false);
+      lockStartedAtRef.current = null;
+      return;
+    }
+
+    if (lockStartedAtRef.current === null) {
+      lockStartedAtRef.current = performance.now();
+    }
+
+    if (isFetching > 0) {
+      setIsVisible(true);
+      return;
+    }
+
+    const elapsed = performance.now() - lockStartedAtRef.current;
+    const remaining = Math.max(0, 220 - elapsed);
+    const timeoutId = window.setTimeout(() => {
+      setIsVisible(false);
+      setRefreshLock(false);
+      lockStartedAtRef.current = null;
+    }, remaining);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isFetching, isLoading, isRefreshLockActive, setRefreshLock, user]);
+
+  if (!isVisible) {
+    return null;
+  }
+
+  return (
+    <div className="pointer-events-auto fixed inset-0 z-[55] bg-surface-base/6 backdrop-blur-[1px]">
+      <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center pt-safe pt-3">
+        <div className="flex items-center gap-2 rounded-full border border-border/70 bg-surface-card/92 px-3 py-2 shadow-card">
+          <Spinner variant="inline" size="sm" />
+          <span className="text-xs font-medium text-text-secondary">Mise a jour…</span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function applyTheme(theme: 'dark' | 'light' | 'system') {
@@ -202,6 +256,7 @@ function AppContent() {
     <BrowserRouter>
       <AppLifecycleRecoveryManager />
       <QueryLifecycleManager />
+      <RefreshInteractionGuard />
       <ThemeManager />
       <AppRoutes />
     </BrowserRouter>
