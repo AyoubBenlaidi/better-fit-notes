@@ -52,6 +52,8 @@ export function useAuthInit() {
       setLoading(true);
     }
 
+    const hadUserBefore = !!useAuthStore.getState().user;
+
     try {
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       if (sessionError) {
@@ -59,12 +61,16 @@ export function useAuthInit() {
       }
 
       if (!session) {
-        setUser(null);
-
-        if (options?.foregroundRecovery) {
-          queryClient.clear();
+        // During foreground recovery, getSession() can return null transiently
+        // (network not ready yet). Don't nuke the cache if we already had a user —
+        // onAuthStateChange will handle a real sign-out if needed.
+        if (options?.foregroundRecovery && hadUserBefore) {
+          console.warn('[Auth] getSession returned null during foreground recovery — skipping logout');
+          return;
         }
 
+        setUser(null);
+        queryClient.clear();
         return;
       }
 
@@ -99,8 +105,9 @@ export function useAuthInit() {
         console.error('[Auth] ❌ Post-init setup failed', err);
       }
 
-      if (options?.foregroundRecovery || options?.refreshQueries) {
-        await queryClient.cancelQueries();
+      // During foreground recovery, QueryLifecycleManager already handles
+      // refetching active queries — avoid cancelling its in-flight fetches.
+      if (options?.refreshQueries) {
         await queryClient.invalidateQueries();
         await queryClient.resumePausedMutations();
         await queryClient.refetchQueries({ type: 'active' });

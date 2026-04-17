@@ -22,7 +22,7 @@ export function useActiveSession(sessionId: string) {
   const { user } = useAuthStore();
 
   return useQuery({
-    queryKey: ['session', user?.id, sessionId],
+    queryKey: ['session', sessionId],
     queryFn: () => getSession(sessionId),
     enabled: !!sessionId && !!user?.id,
   });
@@ -32,7 +32,7 @@ export function useSessionExercises(sessionId: string) {
   const { user } = useAuthStore();
 
   return useQuery({
-    queryKey: ['sessionExercises', user?.id, sessionId],
+    queryKey: ['sessionExercises', sessionId],
     queryFn: () => getSessionExercises(sessionId),
     enabled: !!sessionId && !!user?.id,
   });
@@ -42,7 +42,7 @@ export function useSetsForSessionExercise(sessionExerciseId: string) {
   const { user } = useAuthStore();
 
   const { data } = useQuery({
-    queryKey: ['sets', user?.id, sessionExerciseId],
+    queryKey: ['sets', sessionExerciseId],
     queryFn: () => getSetsForSessionExercise(sessionExerciseId),
     enabled: !!sessionExerciseId && !!user?.id,
   });

@@ -123,12 +123,12 @@ export function SessionPage() {
     muscleGroupsQuery.error;
 
   async function handleRetry() {
-    await queryClient.invalidateQueries({ queryKey: ['session', user?.id, id] });
-    await queryClient.invalidateQueries({ queryKey: ['sessionExercises', user?.id, id] });
+    await queryClient.invalidateQueries({ queryKey: ['session', id] });
+    await queryClient.invalidateQueries({ queryKey: ['sessionExercises', id] });
     await queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] });
     await queryClient.invalidateQueries({ queryKey: ['muscleGroups', user?.id] });
-    await queryClient.refetchQueries({ queryKey: ['session', user?.id, id] });
-    await queryClient.refetchQueries({ queryKey: ['sessionExercises', user?.id, id] });
+    await queryClient.refetchQueries({ queryKey: ['session', id] });
+    await queryClient.refetchQueries({ queryKey: ['sessionExercises', id] });
     await queryClient.refetchQueries({ queryKey: ['exercises', user?.id] });
     await queryClient.refetchQueries({ queryKey: ['muscleGroups', user?.id] });
   }
