@@ -22,7 +22,7 @@ export function useActiveSession(sessionId: string) {
   const { user } = useAuthStore();
 
   return useQuery({
-    queryKey: ['session', sessionId],
+    queryKey: ['session', user?.id, sessionId],
     queryFn: () => getSession(sessionId),
     enabled: !!sessionId && !!user?.id,
   });
@@ -32,7 +32,7 @@ export function useSessionExercises(sessionId: string) {
   const { user } = useAuthStore();
 
   return useQuery({
-    queryKey: ['sessionExercises', sessionId],
+    queryKey: ['sessionExercises', user?.id, sessionId],
     queryFn: () => getSessionExercises(sessionId),
     enabled: !!sessionId && !!user?.id,
   });
@@ -42,7 +42,7 @@ export function useSetsForSessionExercise(sessionExerciseId: string) {
   const { user } = useAuthStore();
 
   const { data } = useQuery({
-    queryKey: ['sets', sessionExerciseId],
+    queryKey: ['sets', user?.id, sessionExerciseId],
     queryFn: () => getSetsForSessionExercise(sessionExerciseId),
     enabled: !!sessionExerciseId && !!user?.id,
   });
@@ -65,9 +65,8 @@ export function useAddExerciseToSession() {
       return se;
     },
     onSuccess: (se) => {
-      // ['sessionExercises', sessionId] is also used by CalendarPage — both get fresh data
-      queryClient.invalidateQueries({ queryKey: ['sessionExercises', se.sessionId] });
-      queryClient.invalidateQueries({ queryKey: ['sets', se.id] });
+      queryClient.invalidateQueries({ queryKey: ['sessionExercises', user?.id, se.sessionId] });
+      queryClient.invalidateQueries({ queryKey: ['sets', user?.id, se.id] });
       
       // Invalidate analytics cache since session now has one more exercise
       queryClient.invalidateQueries({ queryKey: ['sessionStats'] });
@@ -79,11 +78,12 @@ export function useAddExerciseToSession() {
 
 export function useRemoveExerciseFromSession() {
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
 
   return useMutation({
     mutationFn: async (sessionExerciseId: string) => {
       let sessionId: string | undefined;
-      for (const [, data] of queryClient.getQueriesData<SessionExercise[]>({ queryKey: ['sessionExercises'] })) {
+      for (const [, data] of queryClient.getQueriesData<SessionExercise[]>({ queryKey: ['sessionExercises', user?.id] })) {
         if (Array.isArray(data)) {
           const found = data.find((se) => se.id === sessionExerciseId);
           if (found) { sessionId = found.sessionId; break; }
@@ -93,8 +93,8 @@ export function useRemoveExerciseFromSession() {
       return { sessionExerciseId, sessionId };
     },
     onSuccess: ({ sessionExerciseId, sessionId }) => {
-      queryClient.removeQueries({ queryKey: ['sets', sessionExerciseId] });
-      if (sessionId) queryClient.invalidateQueries({ queryKey: ['sessionExercises', sessionId] });
+      queryClient.removeQueries({ queryKey: ['sets', user?.id, sessionExerciseId] });
+      if (sessionId) queryClient.invalidateQueries({ queryKey: ['sessionExercises', user?.id, sessionId] });
       
       // Invalidate analytics cache since session now has one fewer exercise
       queryClient.invalidateQueries({ queryKey: ['sessionStats'] });
@@ -115,7 +115,7 @@ export function useAddSet() {
         order, weight: fromSet?.weight, reps: fromSet?.reps, isWarmup: false,
       }),
     onSuccess: (set) => {
-      queryClient.invalidateQueries({ queryKey: ['sets', set.sessionExerciseId] });
+      queryClient.invalidateQueries({ queryKey: ['sets', user?.id, set.sessionExerciseId] });
       // Invalidate analytics cache since volume may have changed
       queryClient.invalidateQueries({ queryKey: ['volumeStats'] });
     },
@@ -125,12 +125,13 @@ export function useAddSet() {
 
 export function useUpdateSet() {
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
 
   return useMutation({
     mutationFn: ({ id, ...data }: Partial<WorkoutSet> & { id: string }) =>
       updateSet(id, data),
     onSuccess: (set) => {
-      queryClient.invalidateQueries({ queryKey: ['sets', set.sessionExerciseId] });
+      queryClient.invalidateQueries({ queryKey: ['sets', user?.id, set.sessionExerciseId] });
       // Invalidate analytics cache since volume or completion status may have changed
       queryClient.invalidateQueries({ queryKey: ['volumeStats'] });
       queryClient.invalidateQueries({ queryKey: ['sessionStats'] });
@@ -141,12 +142,13 @@ export function useUpdateSet() {
 
 export function useDeleteSet() {
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
 
   return useMutation({
     mutationFn: async (id: string) => {
       // Find the set in cache to know its sessionExerciseId
       let sessionExerciseId: string | undefined;
-      for (const [, data] of queryClient.getQueriesData<WorkoutSet[]>({ queryKey: ['sets'] })) {
+      for (const [, data] of queryClient.getQueriesData<WorkoutSet[]>({ queryKey: ['sets', user?.id] })) {
         if (Array.isArray(data)) {
           const found = data.find((s) => s.id === id);
           if (found) { sessionExerciseId = found.sessionExerciseId; break; }
@@ -156,7 +158,7 @@ export function useDeleteSet() {
       return sessionExerciseId;
     },
     onSuccess: (sessionExerciseId) => {
-      if (sessionExerciseId) queryClient.invalidateQueries({ queryKey: ['sets', sessionExerciseId] });
+      if (sessionExerciseId) queryClient.invalidateQueries({ queryKey: ['sets', user?.id, sessionExerciseId] });
       // Invalidate analytics cache since volume has changed
       queryClient.invalidateQueries({ queryKey: ['volumeStats'] });
     },
@@ -166,6 +168,7 @@ export function useDeleteSet() {
 
 export function useReorderSessionExercises() {
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
 
   return useMutation({
     mutationFn: async ({ sourceId, targetId }: { sourceId: string; targetId: string }) => {
@@ -174,7 +177,7 @@ export function useReorderSessionExercises() {
       let sourceOrder: number | undefined;
       let targetOrder: number | undefined;
 
-      for (const [, data] of queryClient.getQueriesData<SessionExercise[]>({ queryKey: ['sessionExercises'] })) {
+      for (const [, data] of queryClient.getQueriesData<SessionExercise[]>({ queryKey: ['sessionExercises', user?.id] })) {
         if (!Array.isArray(data)) continue;
         const source = data.find((se) => se.id === sourceId);
         const target = data.find((se) => se.id === targetId);
@@ -195,7 +198,7 @@ export function useReorderSessionExercises() {
       return sessionId;
     },
     onSuccess: (sessionId) => {
-      if (sessionId) queryClient.invalidateQueries({ queryKey: ['sessionExercises', sessionId] });
+      if (sessionId) queryClient.invalidateQueries({ queryKey: ['sessionExercises', user?.id, sessionId] });
     },
     onError: showMutationError,
   });

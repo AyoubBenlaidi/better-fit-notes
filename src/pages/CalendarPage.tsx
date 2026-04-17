@@ -78,7 +78,7 @@ export function CalendarPage() {
 
   const sessionExerciseQueries = useQueries({
     queries: sessionsInView.map((s) => ({
-      queryKey: ['sessionExercises', s.id],
+      queryKey: ['sessionExercises', user?.id, s.id],
       queryFn: () => getSessionExercises(s.id),
     })),
   });

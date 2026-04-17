@@ -54,6 +54,27 @@ export async function getMuscleGroups(userId: string): Promise<MuscleGroup[]> {
   return data.map((r) => parseRow<MuscleGroup>(r));
 }
 
+export async function getMuscleGroupsByIds(userId: string, muscleGroupIds: string[]): Promise<MuscleGroup[]> {
+  if (!muscleGroupIds.length) return [];
+
+  const uniqueIds = Array.from(new Set(muscleGroupIds));
+  const results = await Promise.all(
+    chunks(uniqueIds, 100).map((chunk) =>
+      sb()
+        .from('muscle_groups')
+        .select('*')
+        .eq('user_id', userId)
+        .in('id', chunk)
+        .then(({ data, error }) => {
+          if (error) throw error;
+          return (data ?? []).map((row) => parseRow<MuscleGroup>(row));
+        }),
+    ),
+  );
+
+  return results.flat();
+}
+
 export async function updateMuscleGroupColor(id: string, color: string): Promise<void> {
   const { error } = await sb()
     .from('muscle_groups').update({ color, updated_at: new Date().toISOString() }).eq('id', id);
@@ -67,6 +88,27 @@ export async function getExercises(userId: string): Promise<Exercise[]> {
     .from('exercises').select('*').eq('user_id', userId).order('name');
   if (error) throw error;
   return data.map((r) => parseRow<Exercise>(r));
+}
+
+export async function getExercisesByIds(userId: string, exerciseIds: string[]): Promise<Exercise[]> {
+  if (!exerciseIds.length) return [];
+
+  const uniqueIds = Array.from(new Set(exerciseIds));
+  const results = await Promise.all(
+    chunks(uniqueIds, 100).map((chunk) =>
+      sb()
+        .from('exercises')
+        .select('*')
+        .eq('user_id', userId)
+        .in('id', chunk)
+        .then(({ data, error }) => {
+          if (error) throw error;
+          return (data ?? []).map((row) => parseRow<Exercise>(row));
+        }),
+    ),
+  );
+
+  return results.flat();
 }
 
 export async function createExercise(

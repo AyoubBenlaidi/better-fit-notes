@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/Button';
 import { useAuthStore } from '@/stores/authStore';
 import type { Exercise } from '@/types/entities';
 import { clsx } from 'clsx';
-import { getExercises, getMuscleGroups, getSetsForSessionExercise } from '@/lib/api';
+import { getExercisesByIds, getMuscleGroupsByIds, getSetsForSessionExercise } from '@/lib/api';
 import { calculateTotalVolume } from '@/lib/volumeCalculator';
 
 export function SessionPage() {
@@ -38,22 +38,26 @@ export function SessionPage() {
   const reorder = useReorderSessionExercises();
   const touchDragDrop = useTouchDragDrop((sourceId, targetId) => reorder.mutate({ sourceId, targetId }));
 
-  const exercisesQuery = useQuery({
-    queryKey: ['exercises', user?.id],
-    queryFn: () => getExercises(user!.id),
-    enabled: !!user,
-    staleTime: Infinity,
+  const exerciseIdsKey = useMemo(
+    () => (sessionExercises ?? []).map((se) => se.exerciseId).sort().join(','),
+    [sessionExercises],
+  );
+
+  const sessionMetadataQuery = useQuery({
+    queryKey: ['sessionMetadata', user?.id, id, exerciseIdsKey],
+    queryFn: async () => {
+      const exerciseIds = (sessionExercises ?? []).map((se) => se.exerciseId);
+      const exercises = await getExercisesByIds(user!.id, exerciseIds);
+      const muscleGroupIds = exercises.map((exercise) => exercise.muscleGroupId);
+      const muscleGroups = await getMuscleGroupsByIds(user!.id, muscleGroupIds);
+      return { exercises, muscleGroups };
+    },
+    enabled: !!user?.id && !!sessionExercises,
+    staleTime: 1000 * 60 * 5,
   });
 
-  const muscleGroupsQuery = useQuery({
-    queryKey: ['muscleGroups', user?.id],
-    queryFn: () => getMuscleGroups(user!.id),
-    enabled: !!user,
-    staleTime: Infinity,
-  });
-
-  const exercises = exercisesQuery.data;
-  const muscleGroups = muscleGroupsQuery.data;
+  const exercises = sessionMetadataQuery.data?.exercises;
+  const muscleGroups = sessionMetadataQuery.data?.muscleGroups;
 
   const exerciseMap = useMemo(
     () => new Map(exercises?.map((e) => [e.id, e]) ?? []),
@@ -67,7 +71,7 @@ export function SessionPage() {
   // Use the same ['sets', seId] keys as ExerciseBlock — cache is shared, invalidations propagate automatically
   const setQueries = useQueries({
     queries: (sessionExercises ?? []).map((se) => ({
-      queryKey: ['sets', se.id],
+      queryKey: ['sets', user?.id, se.id],
       queryFn: () => getSetsForSessionExercise(se.id),
     })),
   });
@@ -113,24 +117,20 @@ export function SessionPage() {
   const isPageLoading =
     (sessionQuery.fetchStatus === 'fetching' && !sessionQuery.data && !sessionQuery.error) ||
     (sessionExercisesQuery.fetchStatus === 'fetching' && !sessionExercisesQuery.data && !sessionExercisesQuery.error) ||
-    (exercisesQuery.fetchStatus === 'fetching' && !exercisesQuery.data && !exercisesQuery.error) ||
-    (muscleGroupsQuery.fetchStatus === 'fetching' && !muscleGroupsQuery.data && !muscleGroupsQuery.error);
+    (((sessionExercises?.length ?? 0) > 0) && sessionMetadataQuery.fetchStatus === 'fetching' && !sessionMetadataQuery.data && !sessionMetadataQuery.error);
 
   const pageError =
     sessionQuery.error ||
     sessionExercisesQuery.error ||
-    exercisesQuery.error ||
-    muscleGroupsQuery.error;
+    sessionMetadataQuery.error;
 
   async function handleRetry() {
-    await queryClient.invalidateQueries({ queryKey: ['session', id] });
-    await queryClient.invalidateQueries({ queryKey: ['sessionExercises', id] });
-    await queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] });
-    await queryClient.invalidateQueries({ queryKey: ['muscleGroups', user?.id] });
-    await queryClient.refetchQueries({ queryKey: ['session', id] });
-    await queryClient.refetchQueries({ queryKey: ['sessionExercises', id] });
-    await queryClient.refetchQueries({ queryKey: ['exercises', user?.id] });
-    await queryClient.refetchQueries({ queryKey: ['muscleGroups', user?.id] });
+    await queryClient.invalidateQueries({ queryKey: ['session', user?.id, id] });
+    await queryClient.invalidateQueries({ queryKey: ['sessionExercises', user?.id, id] });
+    await queryClient.invalidateQueries({ queryKey: ['sessionMetadata', user?.id, id] });
+    await queryClient.refetchQueries({ queryKey: ['session', user?.id, id] });
+    await queryClient.refetchQueries({ queryKey: ['sessionExercises', user?.id, id] });
+    await queryClient.refetchQueries({ queryKey: ['sessionMetadata', user?.id, id] });
   }
 
   if (isPageLoading) {
