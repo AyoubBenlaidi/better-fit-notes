@@ -45,7 +45,10 @@ export function useAuthInit() {
 
     syncInFlightRef.current = true;
 
-    if (options?.foregroundRecovery) {
+    // Only show the full-screen loading indicator if we don't have a user yet
+    // (first load). During foreground recovery the current page stays visible
+    // while auth refreshes silently in the background.
+    if (options?.foregroundRecovery && !useAuthStore.getState().user) {
       setLoading(true);
     }
 
