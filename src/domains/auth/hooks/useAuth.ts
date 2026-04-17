@@ -5,6 +5,8 @@ import { useAuthStore } from '@/stores/authStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { getSettings, seedLibrary, getMuscleGroups } from '@/lib/api';
 
+const AUTH_STORAGE_KEYS = ['auth', 'supabase', 'bfn-auth-store', 'bfn-query-cache', 'bfn-session-store'];
+
 async function setupUserData(userId: string, updateSettings: (p: Partial<any>) => void) {
   const [settings, muscleGroups] = await Promise.all([
     getSettings(userId),
@@ -19,6 +21,18 @@ async function setupUserData(userId: string, updateSettings: (p: Partial<any>) =
   }
 }
 
+function clearAuthBrowserStorage() {
+  try {
+    const keys = Object.keys(localStorage).filter(
+      (key) => key.startsWith('sb-') || AUTH_STORAGE_KEYS.includes(key),
+    );
+
+    keys.forEach((key) => localStorage.removeItem(key));
+  } catch (error) {
+    console.warn('[Auth] Failed to clear invalid auth storage', error);
+  }
+}
+
 export function useAuthInit() {
   const { setUser, setLoading } = useAuthStore();
   const { updateSettings } = useSettingsStore();
@@ -26,7 +40,7 @@ export function useAuthInit() {
   const syncInFlightRef = useRef(false);
   const hiddenAtRef = useRef<number | null>(null);
 
-  const syncSession = useCallback(async (options?: { foregroundRecovery?: boolean }) => {
+  const syncSession = useCallback(async (options?: { foregroundRecovery?: boolean; refreshQueries?: boolean }) => {
     if (!isSupabaseConfigured || !supabase || syncInFlightRef.current) return;
 
     syncInFlightRef.current = true;
@@ -36,27 +50,57 @@ export function useAuthInit() {
     }
 
     try {
-      const { data: { session }, error } = await supabase.auth.getSession();
-      if (error) {
-        console.warn('[Auth] getSession error:', error.message);
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) {
+        console.warn('[Auth] getSession error:', sessionError.message);
       }
 
-      const user = session?.user ?? null;
-      setUser(user);
-
-      if (user) {
-        try {
-          await setupUserData(user.id, updateSettings);
-        } catch (err) {
-          console.error('[Auth] ❌ Post-init setup failed', err);
-        }
+      if (!session) {
+        setUser(null);
 
         if (options?.foregroundRecovery) {
-          await queryClient.resumePausedMutations();
-          await queryClient.refetchQueries({ type: 'active' });
+          queryClient.clear();
         }
-      } else if (options?.foregroundRecovery) {
+
+        return;
+      }
+
+      let validatedSession = session;
+
+      if (options?.foregroundRecovery) {
+        const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
+
+        if (refreshError) {
+          console.warn('[Auth] refreshSession error:', refreshError.message);
+        } else if (refreshedData.session) {
+          validatedSession = refreshedData.session;
+        }
+      }
+
+      const { data: userData, error: userError } = await supabase.auth.getUser(validatedSession.access_token);
+      const user = userData.user ?? null;
+
+      if (userError || !user) {
+        console.warn('[Auth] Stored session is no longer valid', userError?.message ?? 'Missing user');
+        clearAuthBrowserStorage();
+        setUser(null);
         queryClient.clear();
+        return;
+      }
+
+      setUser(user);
+
+      try {
+        await setupUserData(user.id, updateSettings);
+      } catch (err) {
+        console.error('[Auth] ❌ Post-init setup failed', err);
+      }
+
+      if (options?.foregroundRecovery || options?.refreshQueries) {
+        await queryClient.cancelQueries();
+        await queryClient.invalidateQueries();
+        await queryClient.resumePausedMutations();
+        await queryClient.refetchQueries({ type: 'active' });
       }
     } finally {
       setLoading(false);
@@ -81,10 +125,12 @@ export function useAuthInit() {
 
       if (hiddenAt === null) return;
 
-      const hiddenDuration = Date.now() - hiddenAt;
-      if (hiddenDuration < 15000) return;
-
       console.log('[Auth] Foreground recovery after tab inactivity');
+      void syncSession({ foregroundRecovery: true });
+    }
+
+    function handleOnline() {
+      if (document.visibilityState !== 'visible') return;
       void syncSession({ foregroundRecovery: true });
     }
 
@@ -106,10 +152,11 @@ export function useAuthInit() {
         try { await setupUserData(session.user.id, updateSettings); }
         catch (err) { console.error('[Auth] ❌ Post-login setup failed', err); }
       } else if (event === 'TOKEN_REFRESHED' && session?.user) {
-        setUser(session.user);
-        setLoading(false);
+        void syncSession({ refreshQueries: document.visibilityState === 'visible' });
       } else if (event === 'SIGNED_OUT') {
         console.log('[Auth] 🚪 Signed out');
+        clearAuthBrowserStorage();
+        queryClient.clear();
         setUser(null);
         setLoading(false);
       }
@@ -117,15 +164,15 @@ export function useAuthInit() {
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('pageshow', recoverFromBackground);
-    window.addEventListener('online', recoverFromBackground);
+    window.addEventListener('online', handleOnline);
 
     return () => {
       subscription.unsubscribe();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pageshow', recoverFromBackground);
-      window.removeEventListener('online', recoverFromBackground);
+      window.removeEventListener('online', handleOnline);
     };
-  }, [setLoading, setUser, syncSession]);
+  }, [queryClient, setLoading, setUser, syncSession]);
 }
 
 export async function signIn(email: string, password: string) {
@@ -177,23 +224,7 @@ export async function signOut() {
   // Clear Supabase session
   await supabase.auth.signOut();
   
-  // Clear local storage leftovers from previous app versions.
-  try {
-    const keys = Object.keys(localStorage).filter(
-      (key) =>
-        key.startsWith('sb-') ||
-        key === 'auth' ||
-        key === 'supabase' ||
-        key === 'bfn-auth-store' ||
-        key === 'bfn-query-cache' ||
-        key === 'bfn-session-store' ||
-        key === 'bfn-settings',
-    );
-
-    keys.forEach((key) => localStorage.removeItem(key));
-  } catch (error) {
-    console.warn('[Auth] Failed to clear local storage during sign out', error);
-  }
+  clearAuthBrowserStorage();
 }
 
 export async function resetPassword(email: string) {
