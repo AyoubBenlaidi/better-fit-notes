@@ -1,361 +1,235 @@
-# Better Fit Notes - Architecture & Tech Stack
+# Better Fit Notes - Architecture
 
-**Audience:** UX/UI & Frontend Experts  
-**Version:** 1.0  
-**Format:** PWA Mobile-First
+This document describes the architecture that is actually implemented in the codebase as of April 2026.
 
----
+The application is a connected-first SPA. Offline mode has been intentionally removed.
 
-## 📊 Tech Stack Overview
+## Tech Stack
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| **Framework** | React 19 + TypeScript | UI components & type safety |
-| **Build** | Vite 8 | Fast bundling with code splitting |
-| **Styling** | Tailwind CSS 3 | Utility-first, dark mode support |
-| **Routing** | React Router 7 | SPA navigation |
-| **State** | Zustand 5 | Global app state (lightweight) |
-| **Data Fetching** | React Query 5 | Server state sync & caching |
-| **Offline DB** | Dexie 4 + IndexedDB | Local-first persistence |
-| **Backend** | Supabase | Auth, DB, real-time sync |
-| **Forms** | React Hook Form 7 + Zod 4 | Validation & performance |
-| **Charts** | Recharts 3 | Analytics visualizations |
-| **Icons** | Lucide React 1.8 | SVG icon library |
-| **PWA** | Workbox 7 + Manifest | Offline functionality & installability |
+| Layer | Technology | Notes |
+|-------|-----------|-------|
+| UI | React 19 + TypeScript | SPA, typed components and hooks |
+| Build | Vite 8 | Dev server on port 3000, manual chunk splitting |
+| Styling | Tailwind CSS 3 | Mobile-first utility styling |
+| Routing | React Router 7 | BrowserRouter with protected routes |
+| Client state | Zustand 5 | Small UI state only |
+| Server state | React Query 5 | In-memory query cache |
+| Backend | Supabase | Auth + database access |
+| Forms | React Hook Form 7 + Zod 4 | Validation and performant forms |
+| Charts | Recharts 3 | Analytics visualizations |
 
----
+## What The App Is Not
 
-## 🏗️ Architecture Pattern: Domain-Driven Design
+- No offline-first architecture
+- No IndexedDB or Dexie data mirror in active code paths
+- No persisted React Query cache
+- No active service worker registration
+- No offline banner or reconnect queue
 
-```
+Some legacy files and dependencies still exist for compatibility or cleanup, but they are not part of the runtime architecture.
+
+## High-Level Structure
+
+```text
 src/
-├── components/layout          # Shell, Header, BottomNav, Offline Banner
-├── components/ui              # Reusable UI primitives (Button, Modal, Toast, etc.)
-├── domains/                   # Feature domains (each self-contained)
-│   ├── analytics/             # Charts, stats pages
-│   ├── auth/                  # Authentication & user management
-│   ├── exercises/             # Exercise catalog & CRUD
-│   ├── history/               # Historical data & reporting
-│   ├── sessions/              # Active workout sessions
-│   ├── settings/              # User preferences & config
-│   └── templates/             # Workout templates
-├── pages/                     # Full-page route components
-├── stores/                    # Global Zustand stores (auth, session, settings)
-├── lib/                       # Utilities (Supabase, PWA, sync, validators)
-├── types/                     # Shared type definitions
-└── db/                        # Dexie schema & DB setup
+  components/
+    layout/        shell, header, bottom nav
+    ui/            reusable primitives
+  domains/
+    analytics/
+    auth/
+    exercises/
+    history/
+    sessions/
+    settings/
+    templates/
+  hooks/
+  lib/             API client, utilities, startup cleanup
+  pages/           route-level pages
+  stores/          Zustand stores
+  types/           shared entities
 ```
 
-### Domain Structure (Example: `sessions/`)
-```
-domains/sessions/
-├── components/
-│   ├── AddExerciseSheet.tsx   # Bottom sheet UI component
-│   ├── ExerciseBlock.tsx      # Exercise display/edit
-│   └── SetRow.tsx            # Set tracking UI
-├── hooks/
-│   └── useActiveSession.ts    # Session business logic hook
-└── types/ (implicit via shared /types)
-```
+### Architectural Rule
 
-**Principle:** Each domain encapsulates UI + business logic for a feature. Domains communicate via zustand stores & shared types.
+Feature logic lives in `domains/*`, page composition lives in `pages/*`, and raw backend access stays centralized in `src/lib/api.ts`.
 
----
+## Runtime Flow
 
-## 🔄 State Management Architecture
+### Startup
 
-### 1. **Global State** (Zustand Stores)
-```typescript
-// stores/sessionStore.ts - Active session UI state
-{
-  activeSessionId: string | null,      // Currently tracked session
-  restTimerSeconds: number,            // Rest countdown
-  restTimerActive: boolean             // Timer running state
-}
+1. `src/main.tsx` boots the app.
+2. Legacy client cleanup runs before render.
+3. Old service workers are unregistered and browser caches are cleared.
+4. React mounts `App`.
+5. `useAuthInit()` restores the Supabase session.
+6. Protected routes render only after auth loading resolves.
 
-// stores/authStore.ts
-// stores/settingsStore.ts
-```
-**Use case:** UI state, app-wide toggles, temp data  
-**Characteristics:** Minimal, synchronous, no side effects
+### Data Flow
 
-### 2. **Server State** (React Query)
-- Fetches from Supabase
-- Auto-caching with 5-min stale time
-- Retry strategy (1 retry on failure)
-- Integrates with offline sync
-
-### 3. **Client DB** (Dexie + IndexedDB)
-- Local-first persistence for offline functionality
-- Syncs with Supabase when online
-- Real-time hooks via `dexie-react-hooks`
-
----
-
-## 📱 Data Flow: Offline-First Architecture
-
-```
-User Action
-    ↓
-React Component (hooks + state)
-    ↓
-Dexie Local DB (IndexedDB) ← Always writes here first
-    ↓
-Supabase (when online) ← Async sync
-    ↓
-React Query Cache ← Invalidate on sync
+```text
+Page component
+  -> domain hook
+  -> src/lib/api.ts
+  -> Supabase
+  -> mutation invalidates relevant React Query keys
+  -> subscribed screens refresh from server state
 ```
 
-**Key file:** `lib/sync.ts` - Orchestrates offline-first sync logic
+### Route Model
 
----
+| Route | Page |
+|------|------|
+| `/` | CalendarPage |
+| `/session/:id` | SessionPage |
+| `/exercises` | ExercisesPage |
+| `/analytics` | AnalyticsPage |
+| `/history` | HistoryPage |
+| `/templates` | TemplatesPage |
+| `/settings` | SettingsPage |
+| `/auth` | AuthPage |
 
-## 🎨 UI Component System
+All main routes are wrapped in `RequireAuth`.
 
-### Component Hierarchy
-```
-AppShell (Root Layout)
-├── Header
-├── Pages (Route views)
-│   └── Domain components (sessions, exercises, etc.)
-│   └── UI primitives
-├── BottomNav (Mobile navigation)
-└── OfflineBanner (Connection status)
-```
+## State Management
 
-### UI Primitives (`components/ui/`)
-- **Button** - All button variants (solid, ghost, outline)
-- **Input** - Form inputs with validation feedback
-- **Modal** - Centered overlay dialog
-- **BottomSheet** - Mobile sheet for actions
-- **Badge** - Tags/labels
-- **Skeleton** - Loading placeholders
-- **Toast** - Notifications
-- **EmptyState** - Null state UI
+### Zustand Stores
 
-**Style approach:** Tailwind utility classes + custom components  
-**Theme:** Dark mode support via `dark:` prefix + CSS class toggle
+#### `authStore`
 
----
+- In-memory only
+- Holds `user` and `isLoading`
+- Mirrors resolved Supabase auth state for routing and UI
 
-## 🚀 Build & Code Splitting Strategy
+#### `sessionStore`
 
-### Vite Configuration
-```typescript
-// Manual chunks for dependency isolation
-├── charts       (recharts)
-├── supabase     (@supabase/supabase-js)
-├── db           (dexie)
-├── forms        (react-hook-form, @hookform, zod)
-├── router       (react-router)
-├── query        (@tanstack/react-query)
-├── utils        (date-fns, lucide-react, clsx)
-└── react        (react, react-dom)
-```
+- In-memory only
+- Holds active session UI details such as `activeSessionId` and rest timer state
+- Cleared on refresh and sign out
 
-**Why:** Optimize bundle size for mobile; vendors change less frequently
+#### `settingsStore`
 
-### Build Pipeline
-```bash
-npm run build  # tsc -b && vite build
-```
-- TypeScript compilation with project references
-- Vite optimizes for production
-- Chunk size warning limit: 600KB
+- Persisted in `localStorage` as `bfn-settings`
+- Stores theme, date format, weight unit and first day of week
+- Used by the startup theme script in `index.html`
 
----
+### React Query
 
-## 🔐 Authentication Flow
+- Cache is in memory only
+- Default `staleTime` is 5 minutes
+- Default retry count is 1
+- Cache is not persisted across reloads
+- Mutations rely on targeted invalidation rather than global refetch on startup
 
-1. User signs up/logs in on `AuthPage`
-2. Supabase handles session (JWT in localStorage)
-3. `useAuthInit()` hook restores session on app load
-4. Auth state stored in Zustand (`authStore`)
-5. Protected routes check `authStore.user`
+This is important for correctness: refresh should rebuild state from Supabase, not from old local cache.
 
-**Security:** Tokens managed by Supabase, rotation handled automatically
+## Browser Storage Policy
 
----
+| Storage | Used For | Persistence |
+|--------|----------|-------------|
+| `localStorage` | `bfn-settings` theme/preferences | Yes |
+| `localStorage` | Supabase auth session keys | Managed by SDK |
+| React Query persistence | Not used | No |
+| Auth Zustand persistence | Not used | No |
+| Session Zustand persistence | Not used | No |
+| IndexedDB | Not used by active app flow | No |
 
-## 🔊 Real-Time & Sync Mechanisms
+## Service Worker Policy
 
-### Offline Detection
-- `OfflineBanner` component monitors connection
-- Uses browser `online`/`offline` events
-- UI reflects sync status
+The app does not run with a service worker.
 
-### Sync Strategy (`lib/sync.ts`)
-- Queue operations while offline in Dexie
-- On reconnect: re-sync queued changes
-- Conflict resolution: Client state wins
-- React Query invalidates stale data
+Implementation details:
 
----
+- `src/lib/registerSW.ts` removes legacy local cache keys and unregisters service workers on startup
+- `public/sw.js` is a self-unregistering cleanup worker kept only to clean up older installs already in the wild
+- `index.html` no longer links a manifest, so the web app is not presented as an installable PWA entry point
 
-## 📊 Form Validation Pattern
+If service workers come back later, they must be reintroduced as a deliberate architecture change, not as an isolated file edit.
 
-```typescript
-// Combination: React Hook Form (performance) + Zod (type-safe schemas)
-const schema = z.object({
-  exerciseName: z.string().min(1),
-  sets: z.number().int().positive(),
-  reps: z.number().int().positive(),
-});
+## Authentication
 
-const { register, handleSubmit, formState } = useForm({
-  resolver: zodResolver(schema),
-});
-```
+Authentication is fully handled through Supabase.
 
-**Why:** Zod provides runtime validation + TypeScript inference  
-**Performance:** React Hook Form minimizes re-renders
+Flow:
 
----
+1. User signs in, signs up, requests a magic link or resets a password in `AuthPage`
+2. Supabase stores and refreshes the session token
+3. `useAuthInit()` loads the current session on app startup
+4. Zustand mirrors the resolved auth user for routing and UI
+5. On sign out, local leftovers are cleared and query cache is reset
 
-## 🎯 Performance Optimizations
+If Supabase environment variables are missing, the app does not enter an offline fallback anymore. It simply cannot authenticate or load protected data.
 
-### Bundle Splitting
-- Lazy-loaded chart vendor code
-- Separate Supabase client bundle
-- Form validators isolated
+## Data Access Layer
 
-### Rendering
-- Zustand for minimal re-renders (selector pattern)
-- React Query deduplication & caching
-- Memoization where needed (domain-specific)
+`src/lib/api.ts` is the central boundary for backend CRUD.
 
-### Debouncing
-- Search inputs use `useDebounce(query, 200ms)`
-- Prevents excessive database queries
+Responsibilities:
 
-### Skeleton Loaders
-- No full-page spinners
-- Progressive content loading with `<Skeleton />`
+- Convert camelCase app models to snake_case database payloads
+- Parse rows from Supabase into app entities
+- Wrap Supabase queries for sessions, exercises, sets, templates, settings and analytics inputs
+- Batch insert imported data for CSV import
 
----
+This keeps domain hooks thin and prevents Supabase access from leaking across the UI tree.
 
-## 📲 PWA Features
+## UI Composition
 
-### Service Worker (`public/sw.js`)
-- Installed via Workbox (`workbox-window`)
-- Registered in `lib/registerSW.ts`
-- Offline page caching strategy
+### Layout
 
-### App Manifest (`public/manifest.json`)
-- Home screen installation
-- App name, icons, theme colors
-- Start URL: `/`
+- `AppShell` provides the common mobile shell
+- `BottomNav` is always visible on main authenticated routes
+- `Header` is used selectively by pages that need a page title or actions
+- `ToastContainer` is mounted once in the shell
 
----
+### Domain Ownership
 
-## 🎭 Theme System
+- `domains/sessions` handles active workout manipulation
+- `domains/exercises` handles exercise CRUD and muscle group interactions
+- `domains/auth` handles login flows and auth bootstrap
+- `domains/analytics` handles chart composition and metric shaping
 
-### Dark Mode Implementation
-```typescript
-// In App.tsx
-function applyTheme(theme: 'dark' | 'light' | 'system') {
-  root.classList.toggle('dark', isDark);
-}
+## Performance Notes
 
-// Settings store tracks user preference
-// Listens to system preference changes if 'system' mode active
-```
+- Vite manual chunking separates `react`, `router`, `query`, `forms`, `supabase`, `charts` and `utils`
+- Chart code is isolated into a separate vendor chunk
+- Query invalidation is targeted to avoid unnecessary full-app refreshes
+- Removing persisted caches and hydration gates improved refresh and navigation consistency
 
-**CSS Integration:** Tailwind `dark:` modifier + CSS custom properties
+## Operational Guidance
 
----
+### If You Change Startup Behavior
 
-## 🔗 Router Structure
+Review these files together:
 
-```typescript
-/                      → CalendarPage (default)
-/sessions/:id          → SessionPage (active workout)
-/exercises             → ExercisesPage (catalog)
-/analytics             → AnalyticsPage (charts)
-/history               → HistoryPage (past sessions)
-/templates             → TemplatesPage (presets)
-/settings              → SettingsPage (preferences)
-/auth                  → AuthPage (login/signup)
-```
+- `src/main.tsx`
+- `src/App.tsx`
+- `src/lib/registerSW.ts`
+- `src/domains/auth/hooks/useAuth.ts`
 
-**Navigation:** 
-- Top header for desktop metaphors
-- Bottom nav for mobile (BottomNav component)
+### If You Change Storage Or Caching
 
----
+Keep these rules intact unless you are intentionally redesigning the architecture:
 
-## 🧪 Development Workflow
+- Do not persist React Query cache
+- Do not persist auth or session Zustand stores
+- Do not add offline fallback text or behavior without rebuilding the full data model around it
 
-```bash
-# Dev server with HMR
-npm run dev          # Runs on :3000
+### If You Add New Data Fetching
 
-# Type checking + linting
-npm run lint         # ESLint
+- Add the raw Supabase call in `src/lib/api.ts`
+- Wrap it in a domain hook or page query
+- Use stable React Query keys
+- Invalidate only the affected keys after mutation
 
-# Production build
-npm run build        # Type-check + optimize
-npm run preview      # Local production preview
-```
+## Known Legacy Artifacts
 
----
+- `public/sw.js` exists for cleanup, not for runtime caching
+- `public/manifest.json` still exists in the repository but is not linked from the current HTML entrypoint
+- Some older packages such as `dexie`, `dexie-react-hooks`, `workbox-window` and React Query persistence packages may still exist in `package.json` even though the active runtime no longer depends on them
 
-## 📋 Type Safety
+These should be treated as cleanup candidates, not active architecture.
 
-### Shared Types (`types/entities.ts`)
-- Exercise, Session, Set, User models
-- Exported across domains
-- Single source of truth
+## Last Updated
 
-### TypeScript Config
-- Strict mode enabled
-- Path alias: `@/` = `src/`
-- Targets ES2020
-
----
-
-## 🚧 Key Architectural Decisions
-
-| Decision | Rationale |
-|----------|-----------|
-| **Zustand over Redux** | Simpler API, smaller bundle, sufficient for app complexity |
-| **Dexie over plain IndexedDB** | Simplified async API, better TypeScript support |
-| **React Hook Form + Zod** | Minimal re-renders + runtime type validation |
-| **Domain-driven folders** | Scalability, feature teams can work independently |
-| **PWA-first** | Offline-critical for fitness tracking app |
-| **Recharts** | Lightweight, React-native charting library |
-| **Tailwind CSS** | Mobile-first, dark mode built-in, no style bloat |
-
----
-
-## 🎯 Next Steps for Frontend Teams
-
-### Common Tasks
-- **Add new domain:** Create `domains/[feature]/` with components/ + hooks/
-- **Add UI component:** Create in `components/ui/`, export from central index
-- **Add route:** Update React Router config in App.tsx
-- **Optimize bundle:** Check `vite.config.ts` chunk strategy
-- **Theme tweaks:** Modify Tailwind config + Lucide icon set
-
-### Performance Audits
-- Lighthouse (PWA, accessibility)
-- Bundle analysis: `vite build --report`
-- React DevTools Profiler for render bottlenecks
-
----
-
-## 📖 Resources
-
-- **Vite:** https://vitejs.dev
-- **React 19:** https://react.dev
-- **React Router:** https://reactrouter.com
-- **Zustand:** https://github.com/pmndrs/zustand
-- **React Query:** https://tanstack.com/query
-- **Tailwind:** https://tailwindcss.com
-- **Dexie:** https://dexie.org
-- **Zod:** https://zod.dev
-
----
-
-**Last Updated:** April 2026  
-**Maintainer:** Frontend Team
+April 2026

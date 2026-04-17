@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 export interface TouchDragState {
   draggedId: string | null;
@@ -26,11 +26,44 @@ export function useTouchDragDrop(onDrop: (sourceId: string, targetId: string) =>
 
   // Guard: only one drag at a time
   const activeRef = useRef(false);
+  const moveListenerRef = useRef<((event: TouchEvent) => void) | null>(null);
+  const endListenerRef = useRef<(() => void) | null>(null);
+
+  const cleanupDocumentListeners = useCallback(() => {
+    if (moveListenerRef.current) {
+      document.removeEventListener('touchmove', moveListenerRef.current);
+      moveListenerRef.current = null;
+    }
+
+    if (endListenerRef.current) {
+      document.removeEventListener('touchend', endListenerRef.current);
+      document.removeEventListener('touchcancel', endListenerRef.current);
+      endListenerRef.current = null;
+    }
+  }, []);
 
   const reset = useCallback(() => {
+    cleanupDocumentListeners();
     activeRef.current = false;
     setState({ draggedId: null, dragOverId: null, isDragging: false });
-  }, []);
+  }, [cleanupDocumentListeners]);
+
+  useEffect(() => {
+    function handlePageHidden() {
+      if (document.visibilityState === 'hidden') {
+        reset();
+      }
+    }
+
+    window.addEventListener('pagehide', reset);
+    document.addEventListener('visibilitychange', handlePageHidden);
+
+    return () => {
+      window.removeEventListener('pagehide', reset);
+      document.removeEventListener('visibilitychange', handlePageHidden);
+      cleanupDocumentListeners();
+    };
+  }, [cleanupDocumentListeners, reset]);
 
   const handleGripTouchStart = useCallback(
     (e: React.TouchEvent, id: string) => {
@@ -68,7 +101,6 @@ export function useTouchDragDrop(onDrop: (sourceId: string, targetId: string) =>
       }
 
       function onEnd() {
-        document.removeEventListener('touchmove', onMove);
         const { draggedId, dragOverId } = stateRef.current;
         if (dragging && draggedId && dragOverId && draggedId !== dragOverId) {
           onDropRef.current(draggedId, dragOverId);
@@ -76,8 +108,12 @@ export function useTouchDragDrop(onDrop: (sourceId: string, targetId: string) =>
         reset();
       }
 
+      moveListenerRef.current = onMove;
+      endListenerRef.current = onEnd;
+
       document.addEventListener('touchmove', onMove, { passive: false });
       document.addEventListener('touchend', onEnd, { once: true });
+      document.addEventListener('touchcancel', onEnd, { once: true });
     },
     [reset],
   );

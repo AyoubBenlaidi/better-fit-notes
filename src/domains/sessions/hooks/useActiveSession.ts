@@ -10,6 +10,14 @@ import {
 } from '@/lib/api';
 import { toast } from '@/components/ui/Toast';
 
+function showMutationError(err: unknown) {
+  const message = err instanceof Error && err.message
+    ? err.message
+    : 'Action impossible. Recharge la page si le probleme persiste.';
+
+  toast(message, 'error');
+}
+
 export function useActiveSession(sessionId: string) {
   const { data } = useQuery({
     queryKey: ['session', sessionId],
@@ -61,6 +69,7 @@ export function useAddExerciseToSession() {
       queryClient.invalidateQueries({ queryKey: ['sessionStats'] });
       queryClient.invalidateQueries({ queryKey: ['volumeStats'] });
     },
+    onError: showMutationError,
   });
 }
 
@@ -87,6 +96,7 @@ export function useRemoveExerciseFromSession() {
       queryClient.invalidateQueries({ queryKey: ['sessionStats'] });
       queryClient.invalidateQueries({ queryKey: ['volumeStats'] });
     },
+    onError: showMutationError,
   });
 }
 
@@ -105,6 +115,7 @@ export function useAddSet() {
       // Invalidate analytics cache since volume may have changed
       queryClient.invalidateQueries({ queryKey: ['volumeStats'] });
     },
+    onError: showMutationError,
   });
 }
 
@@ -120,6 +131,7 @@ export function useUpdateSet() {
       queryClient.invalidateQueries({ queryKey: ['volumeStats'] });
       queryClient.invalidateQueries({ queryKey: ['sessionStats'] });
     },
+    onError: showMutationError,
   });
 }
 
@@ -144,6 +156,7 @@ export function useDeleteSet() {
       // Invalidate analytics cache since volume has changed
       queryClient.invalidateQueries({ queryKey: ['volumeStats'] });
     },
+    onError: showMutationError,
   });
 }
 
@@ -180,6 +193,7 @@ export function useReorderSessionExercises() {
     onSuccess: (sessionId) => {
       if (sessionId) queryClient.invalidateQueries({ queryKey: ['sessionExercises', sessionId] });
     },
+    onError: showMutationError,
   });
 }
 

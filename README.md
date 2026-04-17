@@ -1,73 +1,159 @@
-# React + TypeScript + Vite
+# Better Fit Notes
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Better Fit Notes is a mobile-first workout tracking SPA built with React, TypeScript and Supabase.
 
-Currently, two official plugins are available:
+The application is connected-first. It does not support offline mode anymore.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Product Scope
 
-## React Compiler
+- Authentication with Supabase
+- Workout sessions and live set tracking
+- Exercise library and muscle groups
+- Templates
+- History and analytics
+- CSV import from FitNotes and JSON/CSV export
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Current Runtime Model
 
-## Expanding the ESLint configuration
+- Server data lives in Supabase
+- React Query caches server data in memory only
+- `authStore` and `sessionStore` are in-memory only
+- `settingsStore` is the only Zustand store persisted to `localStorage`
+- Supabase manages its own auth session in browser storage
+- Service workers are actively disabled and cleaned up on startup
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+This is intentional. Previous local cache and pseudo-offline behavior caused stale refreshes, inconsistent navigation and leftover client state across deployments.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Stack
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+- React 19
+- TypeScript
+- Vite 8
+- React Router 7
+- Zustand 5
+- React Query 5
+- Supabase
+- React Hook Form + Zod
+- Tailwind CSS
+- Recharts
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Local Development
+
+### Requirements
+
+- Node.js 20+
+- npm
+- A Supabase project with the expected tables and auth enabled
+
+### Environment Variables
+
+Create a `.env.local` file with:
+
+```bash
+VITE_SUPABASE_URL=...
+VITE_SUPABASE_ANON_KEY=...
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Without these variables, auth and data loading will not work.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+### Commands
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
+npm run build
+npm run preview
+npm run lint
 ```
+
+The Vite dev server runs on port `3000`.
+
+## Routing
+
+- `/` - calendar and session overview
+- `/session/:id` - active workout session
+- `/exercises` - exercise catalog
+- `/analytics` - analytics dashboards
+- `/history` - session history
+- `/templates` - workout templates
+- `/settings` - preferences, import/export, account actions
+- `/auth` - sign in, sign up, magic link, password reset
+
+## Storage and Cache Policy
+
+### Persisted in browser storage
+
+- `bfn-settings` for theme and user preferences
+- Supabase auth session keys managed by the SDK
+
+### Not persisted anymore
+
+- React Query cache
+- Auth Zustand store
+- Session Zustand store
+- Any offline queue or IndexedDB mirror
+
+### Service worker policy
+
+- No active service worker registration
+- Startup unregisters old service workers and clears browser caches
+- `public/sw.js` exists only as a cleanup worker for previously installed clients
+
+## Data Flow
+
+```text
+React page/component
+  -> domain hook
+  -> src/lib/api.ts
+  -> Supabase
+  -> React Query invalidation / refetch
+```
+
+The app is optimized for fresh server state and predictable refresh behavior, not for offline resilience.
+
+## Project Structure
+
+```text
+src/
+  components/
+    layout/
+    ui/
+  domains/
+    analytics/
+    auth/
+    exercises/
+    history/
+    sessions/
+    settings/
+    templates/
+  hooks/
+  lib/
+  pages/
+  stores/
+  types/
+```
+
+## Important Files
+
+- `src/App.tsx` - router and query client wiring
+- `src/main.tsx` - app bootstrap and legacy client cleanup
+- `src/lib/api.ts` - all Supabase CRUD access
+- `src/lib/registerSW.ts` - disables legacy service workers and clears caches
+- `src/stores/authStore.ts` - in-memory auth UI state
+- `src/stores/sessionStore.ts` - in-memory session UI state
+- `src/stores/settingsStore.ts` - persisted user preferences
+
+## Notes for Contributors
+
+- Do not reintroduce offline behavior partially. If offline support comes back, it must be designed end-to-end.
+- Do not persist React Query cache in `localStorage`.
+- Do not persist session or auth UI state outside Supabase session handling.
+- If startup or refresh behavior changes, review `src/main.tsx`, `src/lib/registerSW.ts` and `src/App.tsx` together.
+
+## Additional Documentation
+
+- See `ARCHITECTURE.md` for a code-oriented architecture summary.
+
+## Last Updated
+
+April 2026

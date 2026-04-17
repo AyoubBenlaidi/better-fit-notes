@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -21,6 +22,47 @@ async function setupUserData(userId: string, updateSettings: (p: Partial<any>) =
 export function useAuthInit() {
   const { setUser, setLoading } = useAuthStore();
   const { updateSettings } = useSettingsStore();
+  const queryClient = useQueryClient();
+  const syncInFlightRef = useRef(false);
+  const hiddenAtRef = useRef<number | null>(null);
+
+  const syncSession = useCallback(async (options?: { foregroundRecovery?: boolean }) => {
+    if (!isSupabaseConfigured || !supabase || syncInFlightRef.current) return;
+
+    syncInFlightRef.current = true;
+
+    if (options?.foregroundRecovery) {
+      setLoading(true);
+    }
+
+    try {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (error) {
+        console.warn('[Auth] getSession error:', error.message);
+      }
+
+      const user = session?.user ?? null;
+      setUser(user);
+
+      if (user) {
+        try {
+          await setupUserData(user.id, updateSettings);
+        } catch (err) {
+          console.error('[Auth] ❌ Post-init setup failed', err);
+        }
+
+        if (options?.foregroundRecovery) {
+          await queryClient.resumePausedMutations();
+          await queryClient.refetchQueries({ type: 'active' });
+        }
+      } else if (options?.foregroundRecovery) {
+        queryClient.clear();
+      }
+    } finally {
+      setLoading(false);
+      syncInFlightRef.current = false;
+    }
+  }, [queryClient, setLoading, setUser, updateSettings]);
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) {
@@ -29,21 +71,31 @@ export function useAuthInit() {
       return;
     }
 
-    // Resolve loading immediately from localStorage (no network required).
-    // If the access token is expired, Supabase may make one refresh call here,
-    // but it will always resolve (session or null) rather than hanging forever.
-    supabase.auth.getSession().then(async ({ data: { session }, error }) => {
-      if (error) console.warn('[Auth] getSession error:', error.message);
+    void syncSession();
 
-      const user = session?.user ?? null;
-      setUser(user);
-      setLoading(false);
+    function recoverFromBackground() {
+      if (document.visibilityState !== 'visible') return;
 
-      if (user) {
-        try { await setupUserData(user.id, updateSettings); }
-        catch (err) { console.error('[Auth] ❌ Post-init setup failed', err); }
+      const hiddenAt = hiddenAtRef.current;
+      hiddenAtRef.current = null;
+
+      if (hiddenAt === null) return;
+
+      const hiddenDuration = Date.now() - hiddenAt;
+      if (hiddenDuration < 15000) return;
+
+      console.log('[Auth] Foreground recovery after tab inactivity');
+      void syncSession({ foregroundRecovery: true });
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'hidden') {
+        hiddenAtRef.current = Date.now();
+        return;
       }
-    });
+
+      recoverFromBackground();
+    }
 
     // Keep listening for sign-in / sign-out / token refresh events.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
@@ -55,6 +107,7 @@ export function useAuthInit() {
         catch (err) { console.error('[Auth] ❌ Post-login setup failed', err); }
       } else if (event === 'TOKEN_REFRESHED' && session?.user) {
         setUser(session.user);
+        setLoading(false);
       } else if (event === 'SIGNED_OUT') {
         console.log('[Auth] 🚪 Signed out');
         setUser(null);
@@ -62,8 +115,17 @@ export function useAuthInit() {
       }
     });
 
-    return () => subscription.unsubscribe();
-  }, [setUser, setLoading, updateSettings]);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pageshow', recoverFromBackground);
+    window.addEventListener('online', recoverFromBackground);
+
+    return () => {
+      subscription.unsubscribe();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pageshow', recoverFromBackground);
+      window.removeEventListener('online', recoverFromBackground);
+    };
+  }, [setLoading, setUser, syncSession]);
 }
 
 export async function signIn(email: string, password: string) {
