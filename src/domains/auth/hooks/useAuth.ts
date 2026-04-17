@@ -43,48 +43,9 @@ export function useAuthInit() {
   const queryClient = useQueryClient();
   const syncInFlightRef = useRef(false);
   const wasHiddenRef = useRef(false);
-
-  const restoreSession = useCallback(async () => {
-    if (!isSupabaseConfigured || !supabase || syncInFlightRef.current) return;
-
-    syncInFlightRef.current = true;
-    setLoading(true);
-
-    try {
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError) {
-        console.warn('[Auth] getSession error:', sessionError.message);
-      }
-
-      if (!session) {
-        setUser(null);
-        queryClient.clear();
-        return;
-      }
-
-      const { data: userData, error: userError } = await supabase.auth.getUser(session.access_token);
-      const user = userData.user ?? null;
-
-      if (userError || !user) {
-        console.warn('[Auth] Stored session is no longer valid', userError?.message ?? 'Missing user');
-        clearAuthBrowserStorage();
-        setUser(null);
-        queryClient.clear();
-        return;
-      }
-
-      setUser(user);
-
-      try {
-        await setupUserData(user.id, updateSettings);
-      } catch (err) {
-        console.error('[Auth] ❌ Post-init setup failed', err);
-      }
-    } finally {
-      setLoading(false);
-      syncInFlightRef.current = false;
-    }
-  }, [queryClient, setLoading, setUser, updateSettings]);
+  // Prevents duplicate setupUserData() calls across StrictMode double-invoke
+  // and concurrent INITIAL_SESSION + SIGNED_IN events for the same user.
+  const setupDoneForRef = useRef<string | null>(null);
 
   const recoverSession = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase || syncInFlightRef.current) return;
@@ -95,33 +56,23 @@ export function useAuthInit() {
     syncInFlightRef.current = true;
 
     try {
-      // Foreground recovery is intentionally simple: refresh the Supabase
-      // session once, validate it, then refetch only the currently visible data.
       const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
+
       if (refreshError) {
-        console.warn('[Auth] refreshSession error:', refreshError.message);
-      }
-
-      const session = refreshedData.session ?? (await supabase.auth.getSession()).data.session;
-      if (!session) {
-        clearAuthBrowserStorage();
-        setUser(null);
-        queryClient.clear();
+        // Network/transient error — keep the user logged in and refetch optimistically.
+        // A genuine expiry fires SIGNED_OUT via onAuthStateChange which handles logout.
+        console.warn('[Auth] refreshSession error on recovery (kept session):', refreshError.message);
+        await queryClient.refetchQueries({ type: 'active' });
         return;
       }
 
-      const { data: userData, error: userError } = await supabase.auth.getUser(session.access_token);
-      const user = userData.user ?? null;
-
-      if (userError || !user) {
-        console.warn('[Auth] Refreshed session is no longer valid', userError?.message ?? 'Missing user');
-        clearAuthBrowserStorage();
-        setUser(null);
-        queryClient.clear();
+      if (!refreshedData.session) {
+        // Refresh returned no session without error = refresh_token revoked.
+        // onAuthStateChange already fired SIGNED_OUT and cleared state.
         return;
       }
 
-      setUser(user);
+      setUser(refreshedData.session.user);
       await queryClient.refetchQueries({ type: 'active' });
     } finally {
       syncInFlightRef.current = false;
@@ -134,8 +85,6 @@ export function useAuthInit() {
       setLoading(false);
       return;
     }
-
-    void restoreSession();
 
     function handleOnline() {
       if (document.visibilityState !== 'visible') return;
@@ -155,16 +104,34 @@ export function useAuthInit() {
     }
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session?.user) {
-        console.log(`[Auth] ✅ SIGNED_IN — ${session.user.email}`);
+      console.log('[Auth] onAuthStateChange', event, { hasSession: !!session, hasUser: !!session?.user });
+
+      if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') {
+        if (session?.user) {
+          setUser(session.user);
+          setLoading(false);
+          if (setupDoneForRef.current !== session.user.id) {
+            setupDoneForRef.current = session.user.id;
+            setupUserData(session.user.id, updateSettings).catch((err) =>
+              console.error('[Auth] ❌ Post-login setup failed', err),
+            );
+          }
+        } else {
+          setUser(null);
+          queryClient.clear();
+          setLoading(false);
+        }
+        return;
+      }
+
+      if (event === 'TOKEN_REFRESHED' && session?.user) {
         setUser(session.user);
-        setLoading(false);
-        try { await setupUserData(session.user.id, updateSettings); }
-        catch (err) { console.error('[Auth] ❌ Post-login setup failed', err); }
-      } else if (event === 'TOKEN_REFRESHED' && session?.user) {
-        setUser(session.user);
-      } else if (event === 'SIGNED_OUT') {
+        return;
+      }
+
+      if (event === 'SIGNED_OUT') {
         console.log('[Auth] 🚪 Signed out');
+        setupDoneForRef.current = null;
         clearAuthBrowserStorage();
         queryClient.clear();
         setUser(null);
@@ -180,7 +147,7 @@ export function useAuthInit() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('online', handleOnline);
     };
-  }, [queryClient, recoverSession, restoreSession, setLoading, setUser, updateSettings]);
+  }, [queryClient, recoverSession, setLoading, setUser, updateSettings]);
 }
 
 export async function signIn(email: string, password: string) {
@@ -228,10 +195,10 @@ export async function signInWithMagicLink(email: string) {
 
 export async function signOut() {
   if (!supabase) return;
-  
+
   // Clear Supabase session
   await supabase.auth.signOut();
-  
+
   clearAuthBrowserStorage();
 }
 
