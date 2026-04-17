@@ -143,7 +143,6 @@ function OverviewTab() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Global refetch is handled by App.tsx after Zustand rehydration
   const mgMap = useMemo(() => new Map(muscleGroups?.map((mg) => [mg.id, mg]) ?? []), [muscleGroups]);
   const periodConfig = getPeriodConfig(periodType);
 

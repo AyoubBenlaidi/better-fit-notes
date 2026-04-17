@@ -13,6 +13,7 @@ import {
 } from '@/domains/sessions/hooks/useActiveSession';
 import { useTouchDragDrop } from '@/domains/sessions/hooks/useTouchDragDrop';
 import { Button } from '@/components/ui/Button';
+import { Spinner } from '@/components/ui/Spinner';
 import { useAuthStore } from '@/stores/authStore';
 import type { Exercise } from '@/types/entities';
 import { clsx } from 'clsx';
@@ -27,8 +28,6 @@ export function SessionPage() {
   const [addExerciseOpen, setAddExerciseOpen] = useState(false);
   const [draggedExerciseId, setDraggedExerciseId] = useState<string | null>(null);
   const [dragOverExerciseId, setDragOverExerciseId] = useState<string | null>(null);
-
-  // Global refetch is handled by App.tsx after Zustand rehydration
 
   const sessionQuery = useActiveSession(id!);
   const sessionExercisesQuery = useSessionExercises(id!);
@@ -127,6 +126,15 @@ export function SessionPage() {
     sessionExercisesQuery.error ||
     sessionMetadataQuery.error;
 
+  const isRefreshingVisibleSession =
+    !!session &&
+    !isPageLoading &&
+    (
+      sessionQuery.fetchStatus === 'fetching' ||
+      sessionExercisesQuery.fetchStatus === 'fetching' ||
+      (((sessionExercises?.length ?? 0) > 0) && sessionMetadataQuery.fetchStatus === 'fetching')
+    );
+
   async function handleRetry() {
     await queryClient.invalidateQueries({ queryKey: ['session', user?.id, id] });
     await queryClient.invalidateQueries({ queryKey: ['sessionExercises', user?.id, id] });
@@ -195,7 +203,18 @@ export function SessionPage() {
   }
 
   return (
-    <div className="h-dvh flex flex-col bg-surface-base overflow-hidden">
+    <div className="relative h-dvh flex flex-col bg-surface-base overflow-hidden">
+      {isRefreshingVisibleSession && (
+        <div className="pointer-events-auto absolute inset-0 z-40 bg-surface-base/8 backdrop-blur-[1px]">
+          <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center pt-safe pt-3">
+            <div className="flex items-center gap-2 rounded-full border border-border/70 bg-surface-card/92 px-3 py-2 shadow-card">
+              <Spinner variant="inline" size="sm" />
+              <span className="text-xs font-medium text-text-secondary">Mise a jour…</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       <header className="sticky top-0 z-30 bg-nav border-b border-border safe-top flex-shrink-0">
         <div className="flex items-center gap-3 px-3 h-14">
           <button

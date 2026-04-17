@@ -38,33 +38,17 @@ function clearAuthBrowserStorage() {
 }
 
 export function useAuthInit() {
-  const { setUser, setLoading, setRefreshLock } = useAuthStore();
+  const { setUser, setLoading } = useAuthStore();
   const { updateSettings } = useSettingsStore();
   const queryClient = useQueryClient();
   const syncInFlightRef = useRef(false);
-  const hiddenAtRef = useRef<number | null>(null);
+  const wasHiddenRef = useRef(false);
 
-  const syncSession = useCallback(async (options?: { foregroundRecovery?: boolean; refreshQueries?: boolean; forceRefresh?: boolean }) => {
+  const restoreSession = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase || syncInFlightRef.current) return;
 
     syncInFlightRef.current = true;
-
-    // Keep a lightweight interaction lock only during foreground recovery.
-    // A hard reload already rebuilds the screen through normal route/page
-    // loading states; the lock is specifically meant to cover the brief window
-    // where a resumed screen is visible before its active queries settle again.
-    if (options?.foregroundRecovery) {
-      setRefreshLock(true);
-    }
-
-    // Only show the full-screen loading indicator if we don't have a user yet
-    // (first load). During foreground recovery the current page stays visible
-    // while auth refreshes silently in the background.
-    if (options?.foregroundRecovery && !useAuthStore.getState().user) {
-      setLoading(true);
-    }
-
-    const hadUserBefore = !!useAuthStore.getState().user;
+    setLoading(true);
 
     try {
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
@@ -73,43 +57,18 @@ export function useAuthInit() {
       }
 
       if (!session) {
-        // During foreground recovery, getSession() can return null transiently
-        // (network not ready yet). Don't nuke the cache if we already had a user —
-        // onAuthStateChange will handle a real sign-out if needed.
-        if (options?.foregroundRecovery && hadUserBefore) {
-          console.warn('[Auth] getSession returned null during foreground recovery — skipping logout');
-          return;
-        }
-
         setUser(null);
-        setRefreshLock(false);
         queryClient.clear();
         return;
       }
 
-      let validatedSession = session;
-
-      if (options?.foregroundRecovery || options?.forceRefresh) {
-        // Never trust a restored browser session blindly after refresh/resume.
-        // We ask Supabase for a fresh session so React Query rebuilds from the
-        // current credentials, not from a stale local token snapshot.
-        const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
-
-        if (refreshError) {
-          console.warn('[Auth] refreshSession error:', refreshError.message);
-        } else if (refreshedData.session) {
-          validatedSession = refreshedData.session;
-        }
-      }
-
-      const { data: userData, error: userError } = await supabase.auth.getUser(validatedSession.access_token);
+      const { data: userData, error: userError } = await supabase.auth.getUser(session.access_token);
       const user = userData.user ?? null;
 
       if (userError || !user) {
         console.warn('[Auth] Stored session is no longer valid', userError?.message ?? 'Missing user');
         clearAuthBrowserStorage();
         setUser(null);
-        setRefreshLock(false);
         queryClient.clear();
         return;
       }
@@ -121,57 +80,80 @@ export function useAuthInit() {
       } catch (err) {
         console.error('[Auth] ❌ Post-init setup failed', err);
       }
-
-      // During foreground recovery, QueryLifecycleManager already handles
-      // refetching active queries — avoid cancelling its in-flight fetches.
-      if (options?.refreshQueries) {
-        await queryClient.invalidateQueries();
-        await queryClient.resumePausedMutations();
-        await queryClient.refetchQueries({ type: 'active' });
-      }
     } finally {
       setLoading(false);
       syncInFlightRef.current = false;
     }
   }, [queryClient, setLoading, setUser, updateSettings]);
 
+  const recoverSession = useCallback(async () => {
+    if (!isSupabaseConfigured || !supabase || syncInFlightRef.current) return;
+
+    const currentUser = useAuthStore.getState().user;
+    if (!currentUser || document.visibilityState !== 'visible') return;
+
+    syncInFlightRef.current = true;
+
+    try {
+      // Foreground recovery is intentionally simple: refresh the Supabase
+      // session once, validate it, then refetch only the currently visible data.
+      const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError) {
+        console.warn('[Auth] refreshSession error:', refreshError.message);
+      }
+
+      const session = refreshedData.session ?? (await supabase.auth.getSession()).data.session;
+      if (!session) {
+        clearAuthBrowserStorage();
+        setUser(null);
+        queryClient.clear();
+        return;
+      }
+
+      const { data: userData, error: userError } = await supabase.auth.getUser(session.access_token);
+      const user = userData.user ?? null;
+
+      if (userError || !user) {
+        console.warn('[Auth] Refreshed session is no longer valid', userError?.message ?? 'Missing user');
+        clearAuthBrowserStorage();
+        setUser(null);
+        queryClient.clear();
+        return;
+      }
+
+      setUser(user);
+      await queryClient.refetchQueries({ type: 'active' });
+    } finally {
+      syncInFlightRef.current = false;
+    }
+  }, [queryClient, setUser]);
+
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) {
       setUser(null);
       setLoading(false);
-      setRefreshLock(false);
       return;
     }
 
-    void syncSession({ forceRefresh: true });
-
-    function recoverFromBackground() {
-      if (document.visibilityState !== 'visible') return;
-
-      const hiddenAt = hiddenAtRef.current;
-      hiddenAtRef.current = null;
-
-      if (hiddenAt === null) return;
-
-      console.log('[Auth] Foreground recovery after tab inactivity');
-      void syncSession({ foregroundRecovery: true });
-    }
+    void restoreSession();
 
     function handleOnline() {
       if (document.visibilityState !== 'visible') return;
-      void syncSession({ foregroundRecovery: true });
+      void recoverSession();
     }
 
     function handleVisibilityChange() {
       if (document.visibilityState === 'hidden') {
-        hiddenAtRef.current = Date.now();
+        wasHiddenRef.current = true;
         return;
       }
 
-      recoverFromBackground();
+      if (!wasHiddenRef.current) return;
+
+      wasHiddenRef.current = false;
+      void recoverSession();
     }
 
-    // Keep listening for sign-in / sign-out / token refresh events.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
         console.log(`[Auth] ✅ SIGNED_IN — ${session.user.email}`);
@@ -180,28 +162,25 @@ export function useAuthInit() {
         try { await setupUserData(session.user.id, updateSettings); }
         catch (err) { console.error('[Auth] ❌ Post-login setup failed', err); }
       } else if (event === 'TOKEN_REFRESHED' && session?.user) {
-        void syncSession({ refreshQueries: document.visibilityState === 'visible' });
+        setUser(session.user);
       } else if (event === 'SIGNED_OUT') {
         console.log('[Auth] 🚪 Signed out');
         clearAuthBrowserStorage();
         queryClient.clear();
         setUser(null);
         setLoading(false);
-        setRefreshLock(false);
       }
     });
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('pageshow', recoverFromBackground);
     window.addEventListener('online', handleOnline);
 
     return () => {
       subscription.unsubscribe();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('pageshow', recoverFromBackground);
       window.removeEventListener('online', handleOnline);
     };
-  }, [queryClient, setLoading, setRefreshLock, setUser, syncSession]);
+  }, [queryClient, recoverSession, restoreSession, setLoading, setUser, updateSettings]);
 }
 
 export async function signIn(email: string, password: string) {

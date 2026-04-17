@@ -21,7 +21,7 @@ The application is connected-first. It does not support offline mode anymore.
 - `settingsStore` is the only Zustand store persisted to `localStorage`
 - Supabase manages its own auth session in browser storage
 - Service workers are actively disabled and cleaned up on startup
-- During app resume after background/lock, a small interaction lock stays visible until active queries settle
+- Initial hard refresh relies on normal page loading states, not a global interaction lock
 
 This is intentional. Previous local cache and pseudo-offline behavior caused stale refreshes, inconsistent navigation and leftover client state across deployments.
 
@@ -103,8 +103,9 @@ The Vite dev server runs on port `3000`.
 ## Refresh Safety
 
 - Auth recovery always validates the current Supabase session before trusting browser state
-- Startup and foreground recovery refetch active queries instead of reviving a persisted client cache
-- A subtle loader temporarily blocks taps during foreground recovery while those refresh queries are still in flight
+- Startup rebuilds state through the normal page queries instead of reviving a persisted client cache
+- Foreground recovery refreshes the Supabase session once and refetches only active queries
+- The active session screen shows its own subtle loader while visible session data is being refreshed
 - Session pages only reload the metadata required by the current session, which avoids depending on a full catalog cache after reload
 
 ## Data Flow
@@ -156,7 +157,7 @@ src/
 - Do not reintroduce offline behavior partially. If offline support comes back, it must be designed end-to-end.
 - Do not persist React Query cache in `localStorage`.
 - Do not persist session or auth UI state outside Supabase session handling.
-- If you touch refresh/auth recovery, keep the interaction lock aligned with the real fetch lifecycle.
+- Keep refresh handling simple: one auth bootstrap path, one foreground recovery path, and page-local loaders where needed.
 - If startup or refresh behavior changes, review `src/main.tsx`, `src/lib/registerSW.ts` and `src/App.tsx` together.
 
 ## Additional Documentation

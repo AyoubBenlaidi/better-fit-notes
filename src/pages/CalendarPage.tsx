@@ -38,8 +38,6 @@ export function CalendarPage() {
   const firstDay = settings.firstDayOfWeek;
   const weekdays = firstDay === 1 ? WEEKDAYS_MON : WEEKDAYS_SUN;
 
-  // Global refetch is handled by App.tsx after Zustand rehydration
-
   const { data: sessions } = useQuery({
     queryKey: ['sessions', user?.id],
     queryFn: () => getSessions(user!.id),
