@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Dumbbell, Timer, Route, User, MoreHorizontal, Edit, Trash2, History } from 'lucide-react';
 import { clsx } from 'clsx';
 import { Badge } from '@/components/ui/Badge';
@@ -39,6 +39,15 @@ export function ExerciseCard({
 }: ExerciseCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const TypeIcon = typeIcons[exercise.type];
+
+  useEffect(() => {
+    if (!menuOpen) return;
+
+    const closeMenu = () => setMenuOpen(false);
+
+    window.addEventListener('app-background', closeMenu);
+    return () => window.removeEventListener('app-background', closeMenu);
+  }, [menuOpen]);
 
   return (
     <div

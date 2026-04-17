@@ -24,6 +24,69 @@ const queryClient = new QueryClient({
   },
 });
 
+function isTouchPrimaryDevice() {
+  return (
+    navigator.maxTouchPoints > 0 ||
+    window.matchMedia('(pointer: coarse)').matches
+  );
+}
+
+function AppLifecycleRecoveryManager() {
+  useEffect(() => {
+    let hiddenAt: number | null = null;
+
+    function blurActiveElement() {
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLElement) {
+        activeElement.blur();
+      }
+    }
+
+    function cleanupTransientUi() {
+      document.body.style.overflow = '';
+      blurActiveElement();
+      window.dispatchEvent(new Event('app-background'));
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'hidden') {
+        hiddenAt = Date.now();
+        cleanupTransientUi();
+        return;
+      }
+
+      document.body.style.overflow = '';
+
+      if (!isTouchPrimaryDevice() || hiddenAt === null) {
+        hiddenAt = null;
+        return;
+      }
+
+      const hiddenDuration = Date.now() - hiddenAt;
+      hiddenAt = null;
+
+      if (hiddenDuration >= 2000) {
+        window.location.reload();
+      }
+    }
+
+    function handlePageHide() {
+      hiddenAt = Date.now();
+      cleanupTransientUi();
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handlePageHide);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
+    };
+  }, []);
+
+  return null;
+}
+
 function QueryLifecycleManager() {
   useEffect(() => {
     function syncOnlineState() {
@@ -155,6 +218,7 @@ function AppRoutes() {
 function AppContent() {
   return (
     <BrowserRouter>
+      <AppLifecycleRecoveryManager />
       <QueryLifecycleManager />
       <ThemeManager />
       <AppRoutes />

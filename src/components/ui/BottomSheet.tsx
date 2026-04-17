@@ -37,6 +37,15 @@ export function BottomSheet({
     return () => { document.body.style.overflow = ''; };
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleAppBackground = () => onClose();
+
+    window.addEventListener('app-background', handleAppBackground);
+    return () => window.removeEventListener('app-background', handleAppBackground);
+  }, [isOpen, onClose]);
+
   function handleTouchStart(e: React.TouchEvent) {
     startYRef.current = e.touches[0].clientY;
     currentYRef.current = 0;

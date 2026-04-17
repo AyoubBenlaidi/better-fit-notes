@@ -28,6 +28,15 @@ export function Modal({ isOpen, onClose, title, children, className, footer }: M
     return () => { document.body.style.overflow = ''; };
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleAppBackground = () => onClose();
+
+    window.addEventListener('app-background', handleAppBackground);
+    return () => window.removeEventListener('app-background', handleAppBackground);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return createPortal(

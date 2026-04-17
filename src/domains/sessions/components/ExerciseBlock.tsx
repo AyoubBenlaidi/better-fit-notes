@@ -42,6 +42,9 @@ export function ExerciseBlock({
   const sets = useSetsForSessionExercise(sessionExercise.id);
   const addSet = useAddSet();
   const removeExercise = useRemoveExerciseFromSession();
+  const isTouchDevice = typeof window !== 'undefined' && (
+    navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches
+  );
 
   const { data: lastSets } = useQuery({
     queryKey: ['lastSets', sessionExercise.exerciseId, sessionExercise.id],
@@ -74,7 +77,7 @@ export function ExerciseBlock({
 
   return (
     <div
-      draggable
+      draggable={!isTouchDevice}
       data-se-id={sessionExercise.id}
       onDragStart={(e) => onDragStart?.(sessionExercise.id, e)}
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; onDragOver?.(e); }}
