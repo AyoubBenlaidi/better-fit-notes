@@ -40,7 +40,7 @@ export function useAuthInit() {
   const syncInFlightRef = useRef(false);
   const hiddenAtRef = useRef<number | null>(null);
 
-  const syncSession = useCallback(async (options?: { foregroundRecovery?: boolean; refreshQueries?: boolean }) => {
+  const syncSession = useCallback(async (options?: { foregroundRecovery?: boolean; refreshQueries?: boolean; forceRefresh?: boolean }) => {
     if (!isSupabaseConfigured || !supabase || syncInFlightRef.current) return;
 
     syncInFlightRef.current = true;
@@ -67,7 +67,7 @@ export function useAuthInit() {
 
       let validatedSession = session;
 
-      if (options?.foregroundRecovery) {
+      if (options?.foregroundRecovery || options?.forceRefresh) {
         const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
 
         if (refreshError) {
@@ -115,7 +115,7 @@ export function useAuthInit() {
       return;
     }
 
-    void syncSession();
+    void syncSession({ forceRefresh: true });
 
     function recoverFromBackground() {
       if (document.visibilityState !== 'visible') return;

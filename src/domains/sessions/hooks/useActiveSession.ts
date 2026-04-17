@@ -19,28 +19,32 @@ function showMutationError(err: unknown) {
 }
 
 export function useActiveSession(sessionId: string) {
-  const { data } = useQuery({
-    queryKey: ['session', sessionId],
+  const { user } = useAuthStore();
+
+  return useQuery({
+    queryKey: ['session', user?.id, sessionId],
     queryFn: () => getSession(sessionId),
-    enabled: !!sessionId,
+    enabled: !!sessionId && !!user?.id,
   });
-  return data;
 }
 
 export function useSessionExercises(sessionId: string) {
-  const { data } = useQuery({
-    queryKey: ['sessionExercises', sessionId],
+  const { user } = useAuthStore();
+
+  return useQuery({
+    queryKey: ['sessionExercises', user?.id, sessionId],
     queryFn: () => getSessionExercises(sessionId),
-    enabled: !!sessionId,
+    enabled: !!sessionId && !!user?.id,
   });
-  return data;
 }
 
 export function useSetsForSessionExercise(sessionExerciseId: string) {
+  const { user } = useAuthStore();
+
   const { data } = useQuery({
-    queryKey: ['sets', sessionExerciseId],
+    queryKey: ['sets', user?.id, sessionExerciseId],
     queryFn: () => getSetsForSessionExercise(sessionExerciseId),
-    enabled: !!sessionExerciseId,
+    enabled: !!sessionExerciseId && !!user?.id,
   });
   return data;
 }

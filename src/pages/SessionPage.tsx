@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Plus, ArrowLeft, Dumbbell } from 'lucide-react';
 import { format } from 'date-fns';
-import { useQuery, useQueries } from '@tanstack/react-query';
+import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import { ExerciseBlock } from '@/domains/sessions/components/ExerciseBlock';
 import { AddExerciseSheet } from '@/domains/sessions/components/AddExerciseSheet';
 import {
@@ -12,6 +12,7 @@ import {
   useReorderSessionExercises,
 } from '@/domains/sessions/hooks/useActiveSession';
 import { useTouchDragDrop } from '@/domains/sessions/hooks/useTouchDragDrop';
+import { Button } from '@/components/ui/Button';
 import { useAuthStore } from '@/stores/authStore';
 import type { Exercise } from '@/types/entities';
 import { clsx } from 'clsx';
@@ -21,6 +22,7 @@ import { calculateTotalVolume } from '@/lib/volumeCalculator';
 export function SessionPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { user } = useAuthStore();
   const [addExerciseOpen, setAddExerciseOpen] = useState(false);
   const [draggedExerciseId, setDraggedExerciseId] = useState<string | null>(null);
@@ -28,25 +30,30 @@ export function SessionPage() {
 
   // Global refetch is handled by App.tsx after Zustand rehydration
 
-  const session = useActiveSession(id!);
-  const sessionExercises = useSessionExercises(id!);
+  const sessionQuery = useActiveSession(id!);
+  const sessionExercisesQuery = useSessionExercises(id!);
+  const session = sessionQuery.data;
+  const sessionExercises = sessionExercisesQuery.data;
   const addExercise = useAddExerciseToSession();
   const reorder = useReorderSessionExercises();
   const touchDragDrop = useTouchDragDrop((sourceId, targetId) => reorder.mutate({ sourceId, targetId }));
 
-  const { data: exercises } = useQuery({
+  const exercisesQuery = useQuery({
     queryKey: ['exercises', user?.id],
     queryFn: () => getExercises(user!.id),
     enabled: !!user,
     staleTime: Infinity,
   });
 
-  const { data: muscleGroups } = useQuery({
+  const muscleGroupsQuery = useQuery({
     queryKey: ['muscleGroups', user?.id],
     queryFn: () => getMuscleGroups(user!.id),
     enabled: !!user,
     staleTime: Infinity,
   });
+
+  const exercises = exercisesQuery.data;
+  const muscleGroups = muscleGroupsQuery.data;
 
   const exerciseMap = useMemo(
     () => new Map(exercises?.map((e) => [e.id, e]) ?? []),
@@ -103,12 +110,82 @@ export function SessionPage() {
 
   const existingExerciseIds = sessionExercises?.map((se) => se.exerciseId) ?? [];
 
-  if (!session) {
+  const isPageLoading =
+    sessionQuery.isPending ||
+    sessionExercisesQuery.isPending ||
+    exercisesQuery.isPending ||
+    muscleGroupsQuery.isPending;
+
+  const pageError =
+    sessionQuery.error ||
+    sessionExercisesQuery.error ||
+    exercisesQuery.error ||
+    muscleGroupsQuery.error;
+
+  async function handleRetry() {
+    await queryClient.invalidateQueries({ queryKey: ['session', user?.id, id] });
+    await queryClient.invalidateQueries({ queryKey: ['sessionExercises', user?.id, id] });
+    await queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] });
+    await queryClient.invalidateQueries({ queryKey: ['muscleGroups', user?.id] });
+    await queryClient.refetchQueries({ queryKey: ['session', user?.id, id] });
+    await queryClient.refetchQueries({ queryKey: ['sessionExercises', user?.id, id] });
+    await queryClient.refetchQueries({ queryKey: ['exercises', user?.id] });
+    await queryClient.refetchQueries({ queryKey: ['muscleGroups', user?.id] });
+  }
+
+  if (isPageLoading) {
     return (
       <div className="flex items-center justify-center min-h-dvh bg-surface-base">
         <div className="flex flex-col items-center gap-3">
           <div className="h-2 w-2 rounded-full bg-accent animate-bounce" />
           <span className="text-sm text-text-secondary">Chargement…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (pageError) {
+    const message = pageError instanceof Error && pageError.message
+      ? pageError.message
+      : 'Impossible de recharger la seance.';
+
+    return (
+      <div className="flex items-center justify-center min-h-dvh bg-surface-base px-6">
+        <div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-3xl border border-border bg-surface-card p-6 text-center shadow-card">
+          <div className="h-14 w-14 rounded-2xl bg-surface-raised flex items-center justify-center">
+            <Dumbbell size={24} className="text-text-secondary" strokeWidth={1.75} />
+          </div>
+          <div className="flex flex-col gap-1">
+            <p className="text-base font-semibold text-text-primary">Seance indisponible</p>
+            <p className="text-sm text-text-secondary">{message}</p>
+          </div>
+          <div className="flex w-full gap-3">
+            <Button variant="secondary" fullWidth onClick={() => navigate('/', { replace: true })}>
+              Retour au planning
+            </Button>
+            <Button fullWidth onClick={() => void handleRetry()}>
+              Reessayer
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="flex items-center justify-center min-h-dvh bg-surface-base px-6">
+        <div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-3xl border border-border bg-surface-card p-6 text-center shadow-card">
+          <div className="h-14 w-14 rounded-2xl bg-surface-raised flex items-center justify-center">
+            <Dumbbell size={24} className="text-text-secondary" strokeWidth={1.75} />
+          </div>
+          <div className="flex flex-col gap-1">
+            <p className="text-base font-semibold text-text-primary">Seance introuvable</p>
+            <p className="text-sm text-text-secondary">La page a ete rechargee mais la seance n'a pas pu etre retrouvee.</p>
+          </div>
+          <Button fullWidth onClick={() => navigate('/', { replace: true })}>
+            Retour au planning
+          </Button>
         </div>
       </div>
     );
